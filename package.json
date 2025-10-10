@@ -1,0 +1,11 @@
+{
+  "name": "lua-interpreter",
+  "version": "1.0.0",
+  "description": "A simple Lua interpreter written in TypeScript.",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2"
+  }
+}
