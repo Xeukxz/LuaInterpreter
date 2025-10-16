@@ -9,9 +9,9 @@ export interface BaseASTNode {
 export enum ASTNodeType {
   VariableDeclaration = 'VariableDeclaration',
   Function = 'Function',
-  tableProperty = 'TableProperty',
-  tableListItem = 'TableListItem',
-  tableDictItem = 'TableDictItem',
+  Parameter = 'Parameter',
+  TableListItem = 'TableListItem',
+  TableDictItem = 'TableDictItem',
   ExpressionCall = 'ExpressionCall',
   Table = 'Table',
   IndexProperty = 'IndexProperty',
@@ -19,42 +19,52 @@ export enum ASTNodeType {
   Literal = 'Literal',
   Identifier = 'Identifier',
   BinaryExpression = 'BinaryExpression',
+  Assignment = 'Assignment',
+  LogicalExpression = 'LogicalExpression',
+  While = 'While',
+  If = 'If',
 }
-type MissingEntries = ASTNode['type'] extends `${ASTNodeType}` ? 'none' : Exclude<ASTNode['type'], `${ASTNodeType}`>;
-//   ^?
 
 type VariableType = 'local' | 'global';
 
-type ValueResolvable = LiteralNode | FunctionNode | IdentifierNode | TableNode | BinaryExpressionNode;
+type ValueResolvable =
+  | LiteralNode
+  | FunctionNode
+  | IdentifierNode
+  | TableNode
+  | BinaryExpressionNode
+  | LogicalExpressionNode
+  | IndexPropertyNode
+  | ExpressionCallNode;
 
 export interface VariableDeclarationNode<T extends ValueResolvable = ValueResolvable> extends BaseASTNode {
-  type: 'VariableDeclaration';
+  type: ASTNodeType.VariableDeclaration;
   name: string;
   variableType: VariableType;
   value: T;
 }
 
 export interface LiteralNode<T = string | number | boolean | null> extends BaseASTNode {
-  type: 'Literal';
+  type: ASTNodeType.Literal;
   value: T;
   raw: string;
 }
 
 export interface IdentifierNode extends BaseASTNode {
-  type: 'Identifier';
+  type: ASTNodeType.Identifier;
   name: string;
 }
 
 export type FunctionNode = AnonymousFunctionNode | NamedFunctionNode;
 
 export interface FunctionParameterNode {
-  type: 'Parameter';
+  type: ASTNodeType.Parameter;
   name: IdentifierNode;
   defaultValue: ValueResolvable;
 }
 
 export interface BaseFunctionNode extends BaseASTNode {
-  type: 'Function';
+  type: ASTNodeType.Function;
   params: FunctionParameterNode[];
   body: ASTNode[];
   local: boolean;
@@ -70,62 +80,93 @@ export interface NamedFunctionNode extends BaseFunctionNode {
 }
 
 export interface ExpressionCallNode extends BaseASTNode {
-  type: 'ExpressionCall';
+  type: ASTNodeType.ExpressionCall;
   id: IdentifierResolvable;
   params: ValueResolvable[];
 }
 
 export interface TableNode extends BaseASTNode {
-  type: 'Table';
+  type: ASTNodeType.Table;
   properties: TableItemNode[];
 }
 
 export type TableItemNode = TableListItemNode | TableDictItemNode;
 
 export interface TableListItemNode extends BaseASTNode {
-  type: 'TableListItem';
+  type: ASTNodeType.TableListItem;
   value: ValueResolvable;
 }
 
 export interface TableDictItemNode extends BaseASTNode {
-  type: 'TableDictItem';
+  type: ASTNodeType.TableDictItem;
   key: Exclude<ValueResolvable, LiteralNode<null>>;
   value: ValueResolvable;
 }
 
 export interface IndexPropertyNode extends BaseASTNode {
-  type: 'IndexProperty';
+  type: ASTNodeType.IndexProperty;
   table: IdentifierResolvable;
-  property: IdentifierNode;
+  property: ValueResolvable;
 }
 
 export interface ReturnNode extends BaseASTNode {
-  type: 'Return';
+  type: ASTNodeType.Return;
   value: ValueResolvable | void;
 }
 
+export interface AssignmentExpressionNode extends BaseASTNode {
+  type: ASTNodeType.Assignment;
+  operator: '=' | '+=' | '-=' | '*=' | '/=' | '%=' | '^=';
+  left: IdentifierResolvable;
+  right: ValueResolvable;
+}
+
 export interface BinaryExpressionNode extends BaseASTNode {
-  type: 'BinaryExpression';
-  operator: '+' | '-' | '*' | '/' | '%' | '^';
+  type: ASTNodeType.BinaryExpression;
+  operator: '+' | '-' | '*' | '/' | '%' | '^' | '<' | '<=' | '>' | '>=' | '==' | '~=';
   left: ValueResolvable;
   right: ValueResolvable;
+}
+
+export interface LogicalExpressionNode extends BaseASTNode {
+  type: ASTNodeType.LogicalExpression;
+  operator: 'and' | 'or';
+  left: ValueResolvable;
+  right: ValueResolvable;
+}
+
+export interface IfNode extends BaseASTNode {
+  type: ASTNodeType.If;
+  condition: ValueResolvable;
+  body: ASTNode[];
+
+  else: IfNode | ASTNode[] | null;
+}
+
+
+export interface WhileNode extends BaseASTNode {
+  type: ASTNodeType.While;
+  condition: ValueResolvable;
+  body: ASTNode[];
 }
 
 export type IdentifierResolvable = IdentifierNode | IndexPropertyNode;
 
 export type ASTNode =
   | VariableDeclarationNode
-  | NamedFunctionNode
   | TableItemNode
   | ExpressionCallNode
   | TableNode
-  | AnonymousFunctionNode
   | IndexPropertyNode
   | ReturnNode
   | LiteralNode
   | FunctionNode
   | IdentifierNode
-  | BinaryExpressionNode;
+  | BinaryExpressionNode
+  | AssignmentExpressionNode
+  | LogicalExpressionNode
+  | WhileNode
+  | IfNode;
 
 /**
  * Parses a stream of tokens into an Abstract Syntax Tree for interpretation.
@@ -136,7 +177,10 @@ export class Parser {
   ast: ASTNode[] = [];
   currentTokenIndex = -1;
   currentToken!: string;
-  scopeIndexes: number[] = [];
+  currentScope?: {
+    node: ASTNode;
+    body: ASTNode[];
+  };
   dontResolveCurrentStatement = false;
   debug = false;
   lastCreatedNode: ASTNode | null = null;
@@ -196,7 +240,7 @@ export class Parser {
    * @param type The expected type string
    * @returns True if the node is of the specified type, false otherwise
    */
-  isNodeType<T extends ASTNode, U extends T extends { type: infer V } ? V : never>(node: ASTNode | null, type: U): boolean {
+  isNodeType<T extends ASTNode, U extends T extends { type: infer V } ? V : never>(node: T | null, type: U): node is Extract<T, { type: U }> {
     return node?.type === type;
   }
 
@@ -235,7 +279,7 @@ export class Parser {
    */
   createNullLiteralNode(): LiteralNode<null> {
     return this.createNode({
-      type: 'Literal',
+      type: ASTNodeType.Literal,
       value: null,
       raw: 'null',
     });
@@ -246,7 +290,7 @@ export class Parser {
    */
   createLiteralNode(value: any, originalToken: string): LiteralNode {
     return this.createNode({
-      type: 'Literal',
+      type: ASTNodeType.Literal,
       value,
       raw: value == null ? 'null' : originalToken,
     });
@@ -257,7 +301,7 @@ export class Parser {
    */
   createIdentifierNode(name: string): IdentifierNode {
     return this.createNode({
-      type: 'Identifier',
+      type: ASTNodeType.Identifier,
       name
     });
   }
@@ -267,11 +311,131 @@ export class Parser {
    */
   createVariableDeclarationNode(name: string, variableType: VariableType, value: ValueResolvable): VariableDeclarationNode {
     return this.createNode({
-      type: 'VariableDeclaration',
+      type: ASTNodeType.VariableDeclaration,
       name,
       variableType,
       value
     });
+  }
+
+  /**
+   * Checks if the provided token is an operator
+   */
+  isNextTokenOperator(): boolean {
+    return [...tokens.operators, 'and', 'or', '.', '[', '('].includes((this.peek() ?? '')[0]);
+  }
+
+  /**
+   * handles tokens that satisfy `isNextTokenOperator()`
+   */
+  handleOperator(): ASTNode | null {
+    while(this.isNextTokenOperator()) {
+      const operator = this.next();
+      switch(operator) {
+        case '+':
+        case '-':
+        case '*':
+        case '/':
+        case '%':
+        case '^':
+        case '<':
+        case '<=':
+        case '>':
+        case '>=':
+        case '==':
+        case '~=':
+          const left = this.lastCreatedNode;
+          if (!left || !this.isValueResolvable(left)) throw new Error(`Left operand is not a value for operator '${operator}' ${JSON.stringify(left)}`);
+          const right = this.parseValue(this.next());
+          if (!right || !this.isValueResolvable(right)) throw new Error(`Right operand is not a value for operator '${operator}' ${JSON.stringify(right)}`);
+
+          this.createNode({
+            type: ASTNodeType.BinaryExpression,
+            operator,
+            left,
+            right,
+          }) as ValueResolvable;
+          break;
+
+        case 'and':
+        case 'or':
+          const logicalLeft = this.lastCreatedNode;
+          if (!logicalLeft || !this.isValueResolvable(logicalLeft)) throw new Error(`Left operand is not a value for operator '${operator}' ${JSON.stringify(logicalLeft)}`);
+          const logicalRight = this.parseValue(this.next());
+          if (!logicalRight || !this.isValueResolvable(logicalRight)) throw new Error(`Right operand is not a value for operator '${operator}' ${JSON.stringify(logicalRight)}`);
+          
+          const logicalNode: LogicalExpressionNode = {
+            type: ASTNodeType.LogicalExpression,
+            operator,
+            left: logicalLeft,
+            right: logicalRight,
+          };
+          this.pushNode(logicalNode);
+          break;
+
+        case '=':
+        case '+=':
+        case '-=':
+        case '*=':
+        case '/=':
+        case '%=':
+        case '^=':
+          const leftNode = this.lastCreatedNode;
+          if (!leftNode) throw new Error('No left-hand side for assignment');
+          if (!this.isNodeType(leftNode, ASTNodeType.Identifier) && !this.isNodeType(leftNode, ASTNodeType.IndexProperty)) throw new Error('Left-hand side of assignment must be an identifier or index property');
+          const rightValue = this.parseValue(this.next());
+          if (!rightValue || !this.isValueResolvable(rightValue)) throw new Error('Right-hand side of assignment must be a value');
+
+          const assignmentNode: AssignmentExpressionNode = {
+            type: ASTNodeType.Assignment,
+            operator,
+            left: leftNode,
+            right: rightValue,
+          };
+          this.pushNode(assignmentNode);
+          break;
+
+        case '.': {
+          const tableToken = this.lastCreatedNode as IdentifierResolvable;
+          const indexToken = this.next();
+          if(!indexToken || !this.isIdentifier(indexToken)) throw new Error('Expected identifier after .');
+
+          this.createNode({
+            type: ASTNodeType.IndexProperty,
+            table: tableToken,
+            property: this.createIdentifierNode(indexToken),
+          });
+          break;
+        }
+
+        case '[':
+
+          const tableToken = this.lastCreatedNode as IdentifierResolvable;
+          const key = this.parseValue(this.next());
+          this.expect(']');
+
+          const indexNode: IndexPropertyNode = this.createNode({
+            type: ASTNodeType.IndexProperty,
+            table: tableToken,
+            property: key,
+          });
+          this.pushNode(indexNode);
+          break;
+
+        case '(':
+          const funcToken = this.lastCreatedNode as IdentifierResolvable;
+          const params = this.parseCalledFunctionOrMethodParams();
+          const callNode: ExpressionCallNode = this.createNode({
+            type: ASTNodeType.ExpressionCall,
+            id: funcToken,
+            params,
+          });
+          this.pushNode(callNode);
+          break;
+      }
+    }
+    if(this.isNextTokenOperator()) return this.handleOperator();
+    return this.lastCreatedNode;
   }
 
   /**
@@ -295,84 +459,73 @@ export class Parser {
         this.parseVariableDeclaration(token);
         return;
 
-      case '.': {
-        const objectToken = this.peek(-1);
-        if(!objectToken || !this.isIdentifier(objectToken)) throw new Error('Unexpected token before .');
-        const indexToken = this.next();
-        if(!indexToken || !this.isIdentifier(indexToken)) throw new Error('Expected identifier after .');
-
-        let indexNode: IndexPropertyNode = {
-          type: 'IndexProperty',
-          table: this.createIdentifierNode(objectToken),
-          property: this.createIdentifierNode(indexToken),
-        };
-
-        while(this.peek() === '.') {
-          this.next();
-          const nextIndexToken = this.next();
-          if(!nextIndexToken || !this.isIdentifier(nextIndexToken)) throw new Error('Expected identifier after .');
-          indexNode = {
-            type: 'IndexProperty',
-            table: indexNode,
-            property: this.createIdentifierNode(nextIndexToken),
-          };
+      case 'if': {
+        const condition = this.parseValue(this.next());
+        this.expect('then');
+        this.pushNode(this.createNode({
+          type: ASTNodeType.If,
+          condition: condition,
+          body: [],
+          else: null,
+        }));
+        let ifNode = this.lastCreatedNode as IfNode;
+        this.parseBlockBody(ifNode, ifNode.body);
+        while(this.currentToken === 'elseif') {
+          const elseifCondition = this.parseValue(this.next());
+          this.expect('then');
+          ifNode.else = this.createNode({
+            type: ASTNodeType.If,
+            condition: elseifCondition,
+            body: [],
+            else: null,
+          });
+          this.parseBlockBody(ifNode.else, ifNode.else.body);
+          ifNode = ifNode.else;
         }
-        
-        if (this.peek() === '(') { // method call
-          const params = this.parseCalledFunctionOrMethodParams();
-          const callNode: ExpressionCallNode = {
-            type: 'ExpressionCall',
-            id: indexNode,
-            params,
-          };
-          this.pushNode(callNode);
-        } else {
-          this.pushNode(indexNode);
+
+        if(this.currentToken === 'else') {
+          ifNode.else = [];
+          this.parseBlockBody(ifNode, ifNode.else);
         }
+
         return;
       }
 
-      case '+':
-      case '-':
-      case '*':
-      case '/':
-      case '%':
-      case '^':
-        const operator = token;
-        const left = this.lastCreatedNode;
-        if (!left || !this.isValueResolvable(left)) throw new Error(`Left operand is not a value for operator '${operator}' ${JSON.stringify(left)}`);
-        const right = this.parseValue(this.next());
-        if (!right || !this.isValueResolvable(right)) throw new Error(`Right operand is not a value for operator '${operator}' ${JSON.stringify(right)}`);
-
-        return this.createNode({
-          type: 'BinaryExpression',
-          operator,
-          left,
-          right,
-        }) as ValueResolvable;
+      case 'while': {
+        this.expect('(');
+        const condition = this.peek() == ')' ? this.createLiteralNode(true, 'true') : this.parseValue(this.next());
+        this.expect(')');
+        this.expect('do');
+        this.pushNode(this.createNode({
+          type: ASTNodeType.While,
+          condition: condition,
+          body: [],
+        }));
+        const whileNode = this.lastCreatedNode as WhileNode;
+        this.parseBlockBody(whileNode, whileNode.body);
+        return;
+      }
 
       case 'return':
-        let lastStatement: ValueResolvable | null = null;
-        while(this.peek() !== 'end') {
-          let statement = this.parseNextStatement();
-          if(statement && this.isValueResolvable(statement)) lastStatement = statement;
-        }
         const returnNode: ReturnNode = {
-          type: 'Return',
-          value: lastStatement ?? this.createNullLiteralNode(),
+          type: ASTNodeType.Return,
+          value: this.peek() == 'end' ? this.createNullLiteralNode() : this.parseValue(this.next()),
         };
         this.pushNode(returnNode);
         return;
 
+      case 'elseif':
+      case 'else':
       case 'end':
         this.log('Ending current scope');
-        this.scopeIndexes.pop();
         return;
 
       default:
         let potentialValue = this.parseValue(token); // Handles literals, functions, and tables
-        if (potentialValue) return potentialValue;
-        console.warn(`Unrecognized token: ${token}`);
+        if ([ASTNodeType.Function, ASTNodeType.ExpressionCall].includes(potentialValue.type)) {
+          this.pushNode(potentialValue);
+          return potentialValue;
+        } else if (!potentialValue) console.warn(`Unrecognized token: ${token}`);
         return;
     }
   }
@@ -406,29 +559,48 @@ export class Parser {
   parseFunctionDeclaration(callback?: (node: FunctionNode) => void): FunctionNode {
     this.log(`Parsing function declaration`);
     if(this.currentToken === 'function') this.next();
-    const functionNode: BaseFunctionNode = {
-      type: 'Function',
+    const basefunctionNode: BaseFunctionNode = {
+      type: ASTNodeType.Function,
       params: [],
       body: [],
       local: false,
     };
     if(this.isIdentifier(this.currentToken)) {
-      (functionNode as NamedFunctionNode).name = this.createIdentifierNode(this.currentToken);
-      (functionNode as NamedFunctionNode).anonymous = false;
+      this.createNode({
+        ...basefunctionNode,
+        name: this.createIdentifierNode(this.currentToken),
+        anonymous: false,
+      });
     } else {
       this.back();
-      (functionNode as AnonymousFunctionNode).anonymous = true;
+      this.createNode({
+        ...basefunctionNode,
+        anonymous: true,
+      });
     }
-
+    const functionNode = this.lastCreatedNode as FunctionNode;
     this.log(`Function name: ${(functionNode as NamedFunctionNode).name?.name || 'anonymous'}`);
-    
+
     functionNode.params = this.parseParamsDeclaration();
     callback?.(functionNode as FunctionNode);
     this.pushNode(functionNode as FunctionNode);
+    this.parseBlockBody(functionNode, functionNode.body);
+    return functionNode as FunctionNode;
+  }
+
+  /**
+   * Parses a scope body (e.g. function, if, while) until the matching end/else/elseif token is found.  
+   * Updates the currentScope context accordingly.
+   */
+  parseBlockBody(node: ASTNode, scopeBody: ASTNode[]) {
+    this.currentScope = {
+      node,
+      body: scopeBody,
+    };
     do {
       this.parseNextStatement();
-    } while (this.currentToken !== 'end' && this.currentTokenIndex < this.tokens.length - 1);
-    return functionNode as FunctionNode;
+    } while (this.currentToken !== 'end' && this.currentToken !== 'elseif' && this.currentToken !== 'else' && this.currentTokenIndex < this.tokens.length - 1);
+    if(!node.parent) this.currentScope = undefined;
   }
 
   /**
@@ -440,7 +612,7 @@ export class Parser {
     if(this.currentToken !== '(') this.expect('(');
     while (this.peek() !== ')') {
       const param: FunctionParameterNode = {
-        type: 'Parameter',
+        type: ASTNodeType.Parameter,
         name: this.createIdentifierNode(this.expectIdentifier()),
         defaultValue: this.peek() === '=' ? (this.next(), this.parseValue(this.next())) : this.createNullLiteralNode(),
       };
@@ -494,15 +666,14 @@ export class Parser {
    */
   parseBracketStatement() {
     // Determine if it's a function/method call
-    if(this.isNodeType(this.lastCreatedNode, 'Identifier')) {
+    if(this.isNodeType(this.lastCreatedNode, ASTNodeType.Identifier)) {
       const identifier = this.lastCreatedNode as IdentifierNode;
       const params = this.parseCalledFunctionOrMethodParams();
       const callNode: ExpressionCallNode = {
-        type: 'ExpressionCall',
+        type: ASTNodeType.ExpressionCall,
         id: identifier,
         params,
       };
-      this.pushNode(callNode);
       return callNode;
     }
 
@@ -521,7 +692,7 @@ export class Parser {
    */
   createDictPropertyNode(key: TableDictItemNode["key"], value: ValueResolvable): TableDictItemNode {
     return {
-      type: 'TableDictItem',
+      type: ASTNodeType.TableDictItem,
       key,
       value,
     };
@@ -532,7 +703,7 @@ export class Parser {
    */
   createArrayItemNode(value: ValueResolvable): TableListItemNode {
     return {
-      type: 'TableListItem',
+      type: ASTNodeType.TableListItem,
       value,
     };
   }
@@ -544,7 +715,7 @@ export class Parser {
     this.log(`Parsing table`);
     if(this.currentToken !== '{') this.expect('{');
 
-    const tableNode: TableNode = { type: 'Table', properties: [] };
+    const tableNode: TableNode = { type: ASTNodeType.Table, properties: [] };
 
     while (this.peek() !== '}' && this.currentTokenIndex < this.tokens.length - 1) {
       const token = this.next();
@@ -594,44 +765,36 @@ export class Parser {
    */
   parseValue(token: string): ValueResolvable {
     if (!token) throw new Error('Unexpected end of input while parsing value');
-    if (token.match(/^("|'|\[\[)/)) {
-      return this.createLiteralNode(token.slice(1, -1), token);
+    let returnValue: ValueResolvable;
+    if (this.isStringLiteral(token)) {
+      returnValue = this.createLiteralNode(this.parseStringLiteral(token), token);
     } else if (!isNaN(Number(token))) {
-      return this.createLiteralNode(Number(token), token);
+      returnValue = this.createLiteralNode(Number(token), token);
     } else if (token === 'true' || token === 'false') {
-      return this.createLiteralNode(token === 'true', token);
+      returnValue = this.createLiteralNode(token === 'true', token);
     } else if (token === 'null' || token === 'undefined') {
-      return this.createNullLiteralNode();
+      returnValue = this.createNullLiteralNode();
     } else if (token === '{') {
-      return this.parseTable();
+      returnValue = this.parseTable();
     } else if (token === 'function') {
-      return this.parseFunctionDeclaration() as AnonymousFunctionNode;
+      returnValue = this.parseFunctionDeclaration() as AnonymousFunctionNode;
     } else if (token === '(') {
-      const fn = this.parseBracketStatement();
-      if (fn) return fn as ValueResolvable;
+      const bracketStatement = this.parseBracketStatement();
+      if (bracketStatement) returnValue = bracketStatement;
       else throw new Error('Unexpected token while parsing value: ' + token);
     } else if (this.isIdentifier(token)) {
-      if(!this.isKeyToken(token)) return this.createIdentifierNode(token);
-      else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
-    }
-    throw new Error(`Unexpected token while parsing value: ${token}`);
-  }
-
-  /**
-   * Helper to get the parent node of the current scope  
-   * Returns undefined if at the root scope
-   */
-  getCurrentScopeNode<T extends ASTNode, U extends T extends ({ body: ASTNode[] } | VariableDeclarationNode<FunctionNode>) ? T : never>(): U | undefined {
-    if (this.scopeIndexes.length === 0) return undefined;
-    this.log(this.ast, this.scopeIndexes)
-    let node: U = this.ast[this.scopeIndexes[0]] as U;
-    if((node as VariableDeclarationNode<FunctionNode>).value) node = (node as VariableDeclarationNode<FunctionNode>).value as U;
-    for (let i = 1; i < this.scopeIndexes.length; i++) {
-      const scopeIndex = this.scopeIndexes[i];
-      node = ((node as U extends { body: ASTNode[] } ? U : never).body[scopeIndex] 
-           ?? (node as VariableDeclarationNode<FunctionNode>).value.body[scopeIndex]) as U;
-    }
-    return node;
+      if(!this.isKeyToken(token)) {
+        const indentifierNode = this.createIdentifierNode(token);
+        if (this.peek() === '(') {
+          this.next();
+          returnValue = this.parseBracketStatement() as ExpressionCallNode;
+        } else returnValue = indentifierNode;
+      } else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
+    } else throw new Error(`Unexpected token while parsing value: ${token}`);
+    if(this.isNextTokenOperator()) returnValue = this.handleOperator() as ValueResolvable;
+    
+    
+    return returnValue;
   }
 
   /**
@@ -639,15 +802,8 @@ export class Parser {
    * If the node has a body (like functions), it updates the scope tracking accordingly.
    */
   pushNode(node: ASTNode) {
-    this.log(`Pushing node:`, node);
-    const currentScope = this.getCurrentScopeNode();
-    node.parent = currentScope;
-    this.log(currentScope);
-    currentScope?.body.push(node) ?? this.ast.push(node);
-    this.log(`pushed node`, currentScope);
-
-    if("body" in node) currentScope ? this.scopeIndexes.push(currentScope.body.length - 1)
-                                    : this.scopeIndexes.push(this.ast.length - 1);
+    node.parent = this.currentScope?.node;
+    this.currentScope?.body.push(node) ?? this.ast.push(node);
   }
 
   /**

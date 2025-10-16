@@ -1,7 +1,5 @@
 import { tokens } from './tokens';
 
-const operatorOrWhitespaceRegex = new RegExp(`[${tokens.operators.join("").replace('-', '\\-')}\\s]`);
-
 /**
  * A lexer for Lua code that tokenizes the input string into meaningful components.
  * @param lua The Lua code as a string to be tokenized.
@@ -38,7 +36,7 @@ export class Lexer {
     // Skip initial whitespace
     while(/\s/.test(this.lua[this.charIndex])) this.charIndex++;
 
-    this.checkForAndSkipComment();
+    if(this.checkForAndSkipComment()) return; // return if a comment was found and skipped to recheck white space after it
     if(this.charIndex >= this.lua.length) return;
     if(this.checkForAndPushString()) return;
 
@@ -153,6 +151,7 @@ export class Lexer {
       } else { // Single line comment
         this.charIndex += 2;
         while(this.charIndex < this.lua.length && this.lua[this.charIndex] != '\n') this.charIndex++;
+        this.charIndex++; // Skip the newline
         return true;
       }
     }
@@ -170,15 +169,3 @@ export class Lexer {
     this.nextToken = this.lua[this.charIndex + 1]  || "";
   }
 }
-
-import fs from "fs";
-import { Parser } from './Parser';
-import { inspect } from 'util';
-
-const lexer = new Lexer(fs.readFileSync("lua.lua", "utf-8"));
-
-console.log(lexer.tokens.join(" "))
-
-const parser = new Parser(lexer.tokens);
-
-console.log(inspect(parser.ast, { depth: null, colors: true }));

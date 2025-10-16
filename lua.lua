@@ -38,4 +38,36 @@ local function foo()
   return a + b + c + d
 end
 
-print(foo()) -- Output: 10
+local i = 0
+-- i = i
+i = i + 1
+while( i < 5 ) do
+  i = i + 1
+
+  if i > 3 then
+    print("i is greater than 3")
+  else
+    print("i is 3 or less")
+  end
+end
+print(i) -- Output: 5
+
+if true then
+  print("This is if")
+
+elseif true then
+  print("This is elseif")
+else
+  print("This is else")
+end
+
+a = 0
+
+print(foo()) -- Output: 9
+
+print(table.key1) -- Output: value1
+print(table["key2"]) -- Output: 42
+print(table[1]) -- Output: key4
+print(table[10]) -- Output: ten
+print(table.key8) -- Output: { nestedKey = "nestedValue", nestedArr = {1, 2, 3} }
+print(table.key8.nestedKey) -- Output: nestedValue
