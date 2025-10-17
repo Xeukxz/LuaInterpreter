@@ -128,6 +128,8 @@ export class Interpreter {
         return this.buildTable(node, env);
       case ASTNodeType.Literal:
         return node.value ?? null;
+      case ASTNodeType.ConcatExpression: 
+        return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.Identifier:
         return this.resolveIdentifier(node, env);
       case ASTNodeType.IndexProperty:
@@ -140,7 +142,7 @@ export class Interpreter {
       case ASTNodeType.TableListItem:
         // These nodes only appear inside a table literal; evaluation handled there.
         return;
-      case ASTNodeType.Assignment:
+      case ASTNodeType.Assignment: {
         const value = this.evaluateValue(node.right, env);
         if(node.left.type === ASTNodeType.Identifier) {
           env.assign(node.left.name, value);
@@ -151,7 +153,8 @@ export class Interpreter {
           tableValue.entries.set(key, value);
         }
         return value;
-      case ASTNodeType.LogicalExpression:
+      }
+      case ASTNodeType.LogicalExpression: {
         const left = this.evaluateValue(node.left, env);
         const right = this.evaluateValue(node.right, env);
         switch (node.operator) {
@@ -162,9 +165,9 @@ export class Interpreter {
           default:
             throw new Error(`Unknown logical operator: ${'operator' in node ? (node as any).operator : 'unknown'}`);
         }
+      }
       case ASTNodeType.NotExpression:
-        const operand = this.evaluateValue(node.operand, env);
-        return !operand;
+        return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.While: {
         while (this.evaluateValue(node.condition, env)) 
           for (const statement of node.body) this.interpretNode(statement, env);
@@ -262,6 +265,13 @@ export class Interpreter {
     switch (node.type) {
       case ASTNodeType.Literal:
         return node.value ?? null;
+      case ASTNodeType.ConcatExpression: {
+        const left = this.evaluateValue(node.left, env) ?? 'nil';
+        const right = this.evaluateValue(node.right, env) ?? 'nil';
+        if(typeof left === 'object' || typeof right === 'object') 
+          throw new Error('Attempt to concatenate non-primitive value');
+        return String(left) + String(right);
+      }
       case ASTNodeType.Identifier:
         return this.resolveIdentifier(node, env);
       case ASTNodeType.Function:
@@ -278,11 +288,11 @@ export class Interpreter {
       case ASTNodeType.LogicalExpression:
         return this.evaluateLogicalExpression(node, env);
       case ASTNodeType.NotExpression:
-        const operand = this.evaluateValue(node.operand, env);
-        return !operand;
-      default:
+        return !this.evaluateValue(node.operand, env);
+      default: {
         const exhaustive: never = node; exhaustive;
         throw new Error(`Unsupported value node type '${(node as ASTNode).type}'`);
+      }
     }
   }
 

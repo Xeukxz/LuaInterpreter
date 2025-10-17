@@ -1,5 +1,7 @@
 import { tokens } from './tokens';
 
+const multiSymbolOperators = [...tokens.operators, '.'];
+
 /**
  * A lexer for Lua code that tokenizes the input string into meaningful components.
  * @param lua The Lua code as a string to be tokenized.
@@ -44,9 +46,9 @@ export class Lexer {
     if(this.debug) console.log(`Current char: ${char} at index ${this.charIndex}`);
     
     // check for and combine consecutive operators
-    if(tokens.operators.includes(char)) {
+    if(multiSymbolOperators.includes(char)) {
       let tokenOfOperators = char;
-      while(tokens.operators.includes(this.peek(1))) {
+      while(multiSymbolOperators.includes(this.peek(1))) {
         tokenOfOperators += this.peek(1);
         this.charIndex++;
       }

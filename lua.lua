@@ -50,7 +50,7 @@ while( i < 5 ) do
     print("i is 3 or less")
   end
 end
-print(i) -- Output: 5
+print(i) -- 5
 
 if true then
   print("This is if")
@@ -63,16 +63,19 @@ end
 
 a = 0
 
-print(foo()) -- Output: 9
+print(foo()) -- 9
 
-print(table.key1) -- Output: value1
-print(table["key2"]) -- Output: 42
-print(table[1]) -- Output: key4
-print(table[10]) -- Output: ten
-print(table.key8) -- Output: { nestedKey = "nestedValue", nestedArr = {1, 2, 3} }
-print(table.key8.nestedKey) -- Output: nestedValue
-print(true and true) -- Output: true
-print(true and false) -- Output: false
-print(false or true) -- Output: true
-print(false or false) -- Output: false
-print(not false) -- Output: true
+print(table.key1) -- value1
+print(table["key2"]) -- 42
+print(table[1]) -- key4
+print(table[10]) -- ten
+print(table.key8) -- { nestedKey = "nestedValue", nestedArr = {1, 2, 3} }
+print(table.key8.nestedKey) -- nestedValue
+print(true and true) -- true
+print(true and false) -- false
+print(false or true) -- true
+print(false or false) -- false
+print(not false) -- true
+print(not not true) -- true
+print("concat" .. "enation") -- concatenation
+print(not function() end) -- true

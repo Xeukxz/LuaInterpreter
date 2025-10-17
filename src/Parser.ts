@@ -17,6 +17,7 @@ export enum ASTNodeType {
   IndexProperty = 'IndexProperty',
   Return = 'Return',
   Literal = 'Literal',
+  ConcatExpression = 'ConcatExpression',
   Identifier = 'Identifier',
   BinaryExpression = 'BinaryExpression',
   Assignment = 'Assignment',
@@ -26,30 +27,42 @@ export enum ASTNodeType {
   NotExpression = 'NotExpression',
 }
 
+// Types of nodes that can resolve to a value
+// Implemented as a tuple to serve as a single source of truth for both the type and the array used in isValueResolvable
+export type ValueResolvableTypesTuple = [
+  ASTNodeType.Literal,
+  ASTNodeType.ConcatExpression,
+  ASTNodeType.Function,
+  ASTNodeType.Identifier,
+  ASTNodeType.Table,
+  ASTNodeType.BinaryExpression,
+  ASTNodeType.LogicalExpression,
+  ASTNodeType.NotExpression,
+  ASTNodeType.IndexProperty,
+  ASTNodeType.ExpressionCall,
+];
+
+export type ValueResolvable = Extract<ASTNode, { type: ValueResolvableTypesTuple[number] }>;
+
 type VariableType = 'local' | 'global';
 
-export type ValueResolvable =
-  | LiteralNode
-  | FunctionNode
-  | IdentifierNode
-  | TableNode
-  | BinaryExpressionNode
-  | LogicalExpressionNode
-  | NotExpressionNode
-  | IndexPropertyNode
-  | ExpressionCallNode;
-
-export interface VariableDeclarationNode<T extends ValueResolvable = ValueResolvable> extends BaseASTNode {
+export interface VariableDeclarationNode extends BaseASTNode {
   type: ASTNodeType.VariableDeclaration;
   name: string;
   variableType: VariableType;
-  value: T;
+  value: ValueResolvable;
 }
 
 export interface LiteralNode<T = string | number | boolean | null> extends BaseASTNode {
   type: ASTNodeType.Literal;
   value: T;
   raw: string;
+}
+
+export interface ConcatExpressionNode extends BaseASTNode {
+  type: ASTNodeType.ConcatExpression;
+  left: ValueResolvable;
+  right: ValueResolvable;
 }
 
 export interface IdentifierNode extends BaseASTNode {
@@ -165,6 +178,7 @@ export type ASTNode =
   | IndexPropertyNode
   | ReturnNode
   | LiteralNode
+  | ConcatExpressionNode
   | FunctionNode
   | IdentifierNode
   | BinaryExpressionNode
@@ -263,13 +277,19 @@ export class Parser {
    * Type guard to check if a node is ValueResolvable
    */
   isValueResolvable(node: ASTNode): node is ValueResolvable {
-    return [
+    const validTypes = [
       ASTNodeType.Literal,
+      ASTNodeType.ConcatExpression,
       ASTNodeType.Function,
       ASTNodeType.Identifier,
       ASTNodeType.Table,
-      ASTNodeType.BinaryExpression
-    ].includes(node.type as ASTNodeType);
+      ASTNodeType.BinaryExpression,
+      ASTNodeType.LogicalExpression,
+      ASTNodeType.NotExpression,
+      ASTNodeType.IndexProperty,
+      ASTNodeType.ExpressionCall,
+    ] as ValueResolvableTypesTuple
+    return validTypes.includes(node.type as ValueResolvable['type']);
   }
   
   /**
@@ -423,6 +443,19 @@ export class Parser {
           break;
         }
 
+        case '..':
+          const concatLeft = this.lastCreatedNode;
+          if(!concatLeft || !this.isValueResolvable(concatLeft)) throw new Error(`Left operand is not a value for operator '..' ${JSON.stringify(concatLeft)}`);
+          const concatRight = this.parseValue(this.next());
+          if(!concatRight || !this.isValueResolvable(concatRight)) throw new Error(`Right operand is not a value for operator '..' ${JSON.stringify(concatRight)}`);
+
+          this.createNode({
+            type: ASTNodeType.ConcatExpression,
+            left: concatLeft,
+            right: concatRight,
+          });
+          break;
+
         case '[':
 
           const tableToken = this.lastCreatedNode as IdentifierResolvable;
@@ -447,6 +480,9 @@ export class Parser {
           });
           this.pushNode(callNode);
           break;
+
+        default:
+          throw new Error(`Unhandled operator: ${operator}`);
       }
     }
     if(this.isNextTokenOperator()) return this.handleOperator();
@@ -787,7 +823,7 @@ export class Parser {
       returnValue = this.createLiteralNode(Number(token), token);
     } else if (token === 'true' || token === 'false') {
       returnValue = this.createLiteralNode(token === 'true', token);
-    } else if (token === 'null' || token === 'undefined') {
+    } else if (token === 'nil') {
       returnValue = this.createNullLiteralNode();
     } else if (token === '{') {
       returnValue = this.parseTable();
