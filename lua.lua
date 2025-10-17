@@ -71,3 +71,8 @@ print(table[1]) -- Output: key4
 print(table[10]) -- Output: ten
 print(table.key8) -- Output: { nestedKey = "nestedValue", nestedArr = {1, 2, 3} }
 print(table.key8.nestedKey) -- Output: nestedValue
+print(true and true) -- Output: true
+print(true and false) -- Output: false
+print(false or true) -- Output: true
+print(false or false) -- Output: false
+print(not false) -- Output: true

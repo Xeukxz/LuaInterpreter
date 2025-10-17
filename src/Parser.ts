@@ -23,17 +23,19 @@ export enum ASTNodeType {
   LogicalExpression = 'LogicalExpression',
   While = 'While',
   If = 'If',
+  NotExpression = 'NotExpression',
 }
 
 type VariableType = 'local' | 'global';
 
-type ValueResolvable =
+export type ValueResolvable =
   | LiteralNode
   | FunctionNode
   | IdentifierNode
   | TableNode
   | BinaryExpressionNode
   | LogicalExpressionNode
+  | NotExpressionNode
   | IndexPropertyNode
   | ExpressionCallNode;
 
@@ -135,6 +137,11 @@ export interface LogicalExpressionNode extends BaseASTNode {
   right: ValueResolvable;
 }
 
+export interface NotExpressionNode extends BaseASTNode {
+  type: ASTNodeType.NotExpression;
+  operand: ValueResolvable;
+}
+
 export interface IfNode extends BaseASTNode {
   type: ASTNodeType.If;
   condition: ValueResolvable;
@@ -142,8 +149,6 @@ export interface IfNode extends BaseASTNode {
 
   else: IfNode | ASTNode[] | null;
 }
-
-
 export interface WhileNode extends BaseASTNode {
   type: ASTNodeType.While;
   condition: ValueResolvable;
@@ -165,6 +170,7 @@ export type ASTNode =
   | BinaryExpressionNode
   | AssignmentExpressionNode
   | LogicalExpressionNode
+  | NotExpressionNode
   | WhileNode
   | IfNode;
 
@@ -322,7 +328,8 @@ export class Parser {
    * Checks if the provided token is an operator
    */
   isNextTokenOperator(): boolean {
-    return [...tokens.operators, 'and', 'or', '.', '[', '('].includes((this.peek() ?? '')[0]);
+    const peekFirstChar = (this.peek() ?? '')[0];
+    return [...tokens.operators, 'and', 'or', 'not', '.', '[', '('].includes(/|w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
   }
 
   /**
@@ -364,13 +371,21 @@ export class Parser {
           const logicalRight = this.parseValue(this.next());
           if (!logicalRight || !this.isValueResolvable(logicalRight)) throw new Error(`Right operand is not a value for operator '${operator}' ${JSON.stringify(logicalRight)}`);
           
-          const logicalNode: LogicalExpressionNode = {
+          this.createNode({
             type: ASTNodeType.LogicalExpression,
             operator,
             left: logicalLeft,
             right: logicalRight,
-          };
-          this.pushNode(logicalNode);
+          });
+          break;
+        
+        case 'not':
+          const notValue = this.parseValue(this.next());
+          if (!notValue || !this.isValueResolvable(notValue)) throw new Error(`Operand is not a value for operator 'not' ${JSON.stringify(notValue)}`);
+          this.createNode({
+            type: ASTNodeType.NotExpression,
+            operand: notValue,
+          });
           break;
 
         case '=':
@@ -782,6 +797,9 @@ export class Parser {
       const bracketStatement = this.parseBracketStatement();
       if (bracketStatement) returnValue = bracketStatement;
       else throw new Error('Unexpected token while parsing value: ' + token);
+    } else if (token === 'not') {
+      this.back();
+      returnValue = this.handleOperator() as NotExpressionNode;
     } else if (this.isIdentifier(token)) {
       if(!this.isKeyToken(token)) {
         const indentifierNode = this.createIdentifierNode(token);

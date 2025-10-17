@@ -7,11 +7,11 @@ import {
   IdentifierNode,
   IfNode,
   IndexPropertyNode,
-  LiteralNode,
   LogicalExpressionNode,
   NamedFunctionNode,
   TableDictItemNode,
   TableNode,
+  ValueResolvable,
   VariableDeclarationNode,
 } from './Parser';
 
@@ -162,6 +162,9 @@ export class Interpreter {
           default:
             throw new Error(`Unknown logical operator: ${'operator' in node ? (node as any).operator : 'unknown'}`);
         }
+      case ASTNodeType.NotExpression:
+        const operand = this.evaluateValue(node.operand, env);
+        return !operand;
       case ASTNodeType.While: {
         while (this.evaluateValue(node.condition, env)) 
           for (const statement of node.body) this.interpretNode(statement, env);
@@ -253,34 +256,32 @@ export class Interpreter {
    * Evaluates a value node, which can be a literal, identifier, function, table, binary expression, function call, or index property.
    */
   evaluateValue(
-    node:
-      | LiteralNode
-      | FunctionNode
-      | IdentifierNode
-      | TableNode
-      | BinaryExpressionNode
-      | ExpressionCallNode
-      | IndexPropertyNode
-      | LogicalExpressionNode,
+    node: ValueResolvable,
     env: Environment,
   ): RuntimeValue {
     switch (node.type) {
-      case 'Literal':
+      case ASTNodeType.Literal:
         return node.value ?? null;
-      case 'Identifier':
+      case ASTNodeType.Identifier:
         return this.resolveIdentifier(node, env);
-      case 'Function':
+      case ASTNodeType.Function:
         return this.createUserFunction(node, env);
-      case 'Table':
+      case ASTNodeType.Table:
         return this.buildTable(node, env);
-      case 'BinaryExpression':
+      case ASTNodeType.BinaryExpression:
         // console.log('Evaluating binary expression', node);
         return this.evaluateBinaryExpression(node, env);
-      case 'ExpressionCall':
+      case ASTNodeType.ExpressionCall:
         return this.interpretExpressionCall(node, env);
-      case 'IndexProperty':
+      case ASTNodeType.IndexProperty:
         return this.resolveIndexProperty(node, env);
+      case ASTNodeType.LogicalExpression:
+        return this.evaluateLogicalExpression(node, env);
+      case ASTNodeType.NotExpression:
+        const operand = this.evaluateValue(node.operand, env);
+        return !operand;
       default:
+        const exhaustive: never = node; exhaustive;
         throw new Error(`Unsupported value node type '${(node as ASTNode).type}'`);
     }
   }
@@ -406,6 +407,22 @@ export class Interpreter {
         return left !== right;
       default:
         throw new Error(`Unsupported binary operator '${node.operator}'`);
+    }
+  }
+
+  /**
+   * Evaluates a logical expression node, performing 'and' or 'or' operations on its operands.
+   */
+  evaluateLogicalExpression(node: LogicalExpressionNode, env: Environment): RuntimeValue {
+    const left = this.evaluateValue(node.left, env);
+    const right = this.evaluateValue(node.right, env);
+    switch (node.operator) {
+      case 'and':
+        return left && right;
+      case 'or':
+        return left || right;
+      default:
+        throw new Error(`Unknown logical operator: ${node.operator}`);
     }
   }
 
