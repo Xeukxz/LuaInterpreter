@@ -329,7 +329,7 @@ export class Parser {
    */
   isNextTokenOperator(): boolean {
     const peekFirstChar = (this.peek() ?? '')[0];
-    return [...tokens.operators, 'and', 'or', 'not', '.', '[', '('].includes(/|w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
+    return [...tokens.operators, 'and', 'or', 'not', '.', '[', '('].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
   }
 
   /**
