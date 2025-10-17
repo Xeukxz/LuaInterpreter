@@ -65,6 +65,10 @@ class Environment {
     if (this.parent) {
       this.parent.assign(name, value);
       return;
+    } else {
+      // If no parent (global scope), define it here
+      this.values.set(name, value);
+      return;
     }
     throw new Error(`Attempt to assign to undefined variable '${name}'`);
   }
@@ -201,9 +205,7 @@ export class Interpreter {
    */
   interpretVariableDeclaration(node: VariableDeclarationNode, env: Environment): RuntimeValue {
     const value = this.evaluateValue(node.value, env);
-    if (node.variableType === 'local') env.define(node.name, value);
-    else this.globalEnv.define(node.name, value);
-    return value;
+    return env.define(node.name, value), value;
   }
 
   /**

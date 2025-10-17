@@ -44,12 +44,9 @@ export type ValueResolvableTypesTuple = [
 
 export type ValueResolvable = Extract<ASTNode, { type: ValueResolvableTypesTuple[number] }>;
 
-type VariableType = 'local' | 'global';
-
 export interface VariableDeclarationNode extends BaseASTNode {
   type: ASTNodeType.VariableDeclaration;
   name: string;
-  variableType: VariableType;
   value: ValueResolvable;
 }
 
@@ -335,11 +332,10 @@ export class Parser {
   /**
    * Helper to create a VariableDeclaration node
    */
-  createVariableDeclarationNode(name: string, variableType: VariableType, value: ValueResolvable): VariableDeclarationNode {
+  createVariableDeclarationNode(name: string, value: ValueResolvable): VariableDeclarationNode {
     return this.createNode({
       type: ASTNodeType.VariableDeclaration,
       name,
-      variableType,
       value
     });
   }
@@ -507,7 +503,7 @@ export class Parser {
     this.log(`Parsing statement: ${token}`);
     switch (token) {
       case 'local':
-        this.parseVariableDeclaration(token);
+        this.parseVariableDeclaration();
         return;
 
       case 'if': {
@@ -584,8 +580,7 @@ export class Parser {
   /**
    * Parses a variable declaration, and pushes the resulting VariableDeclarationNode to the AST.
    */
-  parseVariableDeclaration(variableType: VariableType) {
-    this.log(`Parsing variable declaration: ${variableType}`);
+  parseVariableDeclaration() {
     if (this.peek() === 'function') 
       return this.next(), this.parseFunctionDeclaration((node) => node.local = true);
     
@@ -599,7 +594,7 @@ export class Parser {
       initializer = this.parseValue(this.next());
     } else initializer = this.createNullLiteralNode();
     
-    const variableNode = this.createVariableDeclarationNode(variableName, variableType, initializer);
+    const variableNode = this.createVariableDeclarationNode(variableName, initializer);
     this.log(`Created variable node: ${JSON.stringify(variableNode)}`, variableNode);
     this.pushNode(variableNode);
   }

@@ -33,6 +33,7 @@ local table = {
 }
 
 local function foo()
+  FooGlobal = "global foo"
   local c = 3
   local d = 4
   return a + b + c + d
@@ -64,7 +65,7 @@ end
 a = 0
 
 print(foo()) -- 9
-
+print(FooGlobal) -- global foo
 print(table.key1) -- value1
 print(table["key2"]) -- 42
 print(table[1]) -- key4
