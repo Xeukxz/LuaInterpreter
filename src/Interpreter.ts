@@ -177,6 +177,12 @@ export class Interpreter {
           for (const statement of node.body) this.interpretNode(statement, env);
         return;
       }
+      case ASTNodeType.Repeat: 
+        do {
+          for (const statement of node.body) this.interpretNode(statement, env);
+        } while (!this.evaluateValue(node.condition, env));
+        return;
+      
       case ASTNodeType.If: {
         if (this.evaluateValue(node.condition, env)) {
           for (const statement of node.body) this.interpretNode(statement, env);

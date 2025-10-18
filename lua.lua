@@ -6,13 +6,6 @@ local a = 1
 local b = 2
 local bool = true
 
-local arr = {1, 2, 3, 4, 5}
-local arr2 = {
-  "aaaaa",
-  "bbbbb",
-  "ccccc",
-}
-
 local table = {
   key1 = "value1",
   key2 = 42,
@@ -63,6 +56,12 @@ else
 end
 
 a = 0
+
+local repeatCount = 0
+repeat 
+  print("repeat " .. repeatCount)
+  repeatCount = repeatCount + 1
+until repeatCount > 5
 
 print(foo()) -- 9
 print(FooGlobal) -- global foo

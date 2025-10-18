@@ -23,6 +23,7 @@ export enum ASTNodeType {
   Assignment = 'Assignment',
   LogicalExpression = 'LogicalExpression',
   While = 'While',
+  Repeat = 'Repeat',
   If = 'If',
   NotExpression = 'NotExpression',
 }
@@ -165,6 +166,12 @@ export interface WhileNode extends BaseASTNode {
   body: ASTNode[];
 }
 
+export interface RepeatNode extends BaseASTNode {
+  type: ASTNodeType.Repeat;
+  body: ASTNode[];
+  condition: ValueResolvable;
+}
+
 export type IdentifierResolvable = IdentifierNode | IndexPropertyNode;
 
 export type ASTNode =
@@ -183,6 +190,7 @@ export type ASTNode =
   | LogicalExpressionNode
   | NotExpressionNode
   | WhileNode
+  | RepeatNode
   | IfNode;
 
 /**
@@ -516,8 +524,9 @@ export class Parser {
           else: null,
         }));
         let ifNode = this.lastCreatedNode as IfNode;
-        this.parseBlockBody(ifNode, ifNode.body);
-        while(this.currentToken === 'elseif') {
+        this.parseBlockBody(ifNode, ifNode.body, ['elseif', 'else', 'end']);
+        while(this.peek() === 'elseif') {
+          this.next(); // consume 'elseif'
           const elseifCondition = this.parseValue(this.next());
           this.expect('then');
           ifNode.else = this.createNode({
@@ -526,13 +535,14 @@ export class Parser {
             body: [],
             else: null,
           });
-          this.parseBlockBody(ifNode.else, ifNode.else.body);
+          this.parseBlockBody(ifNode.else, ifNode.else.body, ['elseif', 'else', 'end']);
           ifNode = ifNode.else;
         }
 
-        if(this.currentToken === 'else') {
+        if(this.peek() === 'else') {
+          this.next(); // consume 'else'
           ifNode.else = [];
-          this.parseBlockBody(ifNode, ifNode.else);
+          this.parseBlockBody(ifNode, ifNode.else, ['elseif', 'else', 'end']);
         }
 
         return;
@@ -549,7 +559,20 @@ export class Parser {
           body: [],
         }));
         const whileNode = this.lastCreatedNode as WhileNode;
-        this.parseBlockBody(whileNode, whileNode.body);
+        this.parseBlockBody(whileNode, whileNode.body, ['end']);
+        return;
+      }
+
+      case 'repeat': {
+        this.pushNode(this.createNode({
+          type: ASTNodeType.Repeat,
+          condition: this.createNullLiteralNode(), // will be set later
+          body: [],
+        }));
+        const repeatNode = this.lastCreatedNode as RepeatNode;
+        this.parseBlockBody(repeatNode, repeatNode.body, ['until']);
+        this.expect('until');
+        repeatNode.condition = this.parseValue(this.next());
         return;
       }
 
@@ -581,8 +604,11 @@ export class Parser {
    * Parses a variable declaration, and pushes the resulting VariableDeclarationNode to the AST.
    */
   parseVariableDeclaration() {
-    if (this.peek() === 'function') 
-      return this.next(), this.parseFunctionDeclaration((node) => node.local = true);
+    if (this.peek() === 'function') {
+      this.next();
+      const funcNode = this.parseFunctionDeclaration((node) => node.local = true);
+      return this.pushNode(funcNode);
+    }
     
     const variableName = this.expectIdentifier();
     let initializer: ValueResolvable | null = null;
@@ -629,8 +655,8 @@ export class Parser {
 
     functionNode.params = this.parseParamsDeclaration();
     callback?.(functionNode as FunctionNode);
-    this.pushNode(functionNode as FunctionNode);
-    this.parseBlockBody(functionNode, functionNode.body);
+    // this.pushNode(functionNode as FunctionNode);
+    this.parseBlockBody(functionNode, functionNode.body, ['end']);
     return functionNode as FunctionNode;
   }
 
@@ -638,14 +664,19 @@ export class Parser {
    * Parses a scope body (e.g. function, if, while) until the matching end/else/elseif token is found.  
    * Updates the currentScope context accordingly.
    */
-  parseBlockBody(node: ASTNode, scopeBody: ASTNode[]) {
+  parseBlockBody(node: ASTNode, scopeBody: ASTNode[], terminators: string[]) {
     this.currentScope = {
       node,
       body: scopeBody,
     };
+    if(terminators.includes(this.peek() ?? '')) { // handle empty bodies
+      if(!node.parent) this.currentScope = undefined;
+      this.next();
+      return;
+    };
     do {
       this.parseNextStatement();
-    } while (this.currentToken !== 'end' && this.currentToken !== 'elseif' && this.currentToken !== 'else' && this.currentTokenIndex < this.tokens.length - 1);
+    } while (!terminators.includes(this.peek() ?? '') && this.currentTokenIndex < this.tokens.length - 1);
     if(!node.parent) this.currentScope = undefined;
   }
 
