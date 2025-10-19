@@ -7,25 +7,28 @@ export interface BaseASTNode {
 }
 
 export enum ASTNodeType {
-  VariableDeclaration = 'VariableDeclaration',
-  Function = 'Function',
-  Parameter = 'Parameter',
-  TableListItem = 'TableListItem',
-  TableDictItem = 'TableDictItem',
-  ExpressionCall = 'ExpressionCall',
-  Table = 'Table',
-  IndexProperty = 'IndexProperty',
-  Return = 'Return',
   Literal = 'Literal',
   ConcatExpression = 'ConcatExpression',
   Identifier = 'Identifier',
-  BinaryExpression = 'BinaryExpression',
+  MultipleValue = 'MultipleValue',
+  VariableDeclaration = 'VariableDeclaration',
   Assignment = 'Assignment',
+  Table = 'Table',
+  TableListItem = 'TableListItem',
+  TableDictItem = 'TableDictItem',
+  IndexProperty = 'IndexProperty',
+  Function = 'Function',
+  Parameter = 'Parameter',
+  Return = 'Return',
+  ExpressionCall = 'ExpressionCall',
+  BinaryExpression = 'BinaryExpression',
   LogicalExpression = 'LogicalExpression',
+  NotExpression = 'NotExpression',
+  NumericFor = 'NumericFor',
+  GenericFor = 'GenericFor',
   While = 'While',
   Repeat = 'Repeat',
   If = 'If',
-  NotExpression = 'NotExpression',
 }
 
 // Types of nodes that can resolve to a value
@@ -33,6 +36,7 @@ export enum ASTNodeType {
 export type ValueResolvableTypesTuple = [
   ASTNodeType.Literal,
   ASTNodeType.ConcatExpression,
+  ASTNodeType.MultipleValue,
   ASTNodeType.Function,
   ASTNodeType.Identifier,
   ASTNodeType.Table,
@@ -43,11 +47,33 @@ export type ValueResolvableTypesTuple = [
   ASTNodeType.ExpressionCall,
 ];
 
+export type ASTNode =
+  | LiteralNode
+  | ConcatExpressionNode
+  | IdentifierNode
+  | MultipleValueNode
+  | VariableDeclarationNode
+  | AssignmentExpressionNode
+  | TableNode
+  | TableItemNode
+  | IndexPropertyNode
+  | FunctionNode
+  | ReturnNode
+  | ExpressionCallNode
+  | BinaryExpressionNode
+  | LogicalExpressionNode
+  | NotExpressionNode
+  | NumericForNode
+  | GenericForNode
+  | WhileNode
+  | RepeatNode
+  | IfNode;
+
 export type ValueResolvable = Extract<ASTNode, { type: ValueResolvableTypesTuple[number] }>;
 
 export interface VariableDeclarationNode extends BaseASTNode {
   type: ASTNodeType.VariableDeclaration;
-  name: string;
+  identifier: IdentifierNode | MultipleValueNode;
   value: ValueResolvable;
 }
 
@@ -66,6 +92,11 @@ export interface ConcatExpressionNode extends BaseASTNode {
 export interface IdentifierNode extends BaseASTNode {
   type: ASTNodeType.Identifier;
   name: string;
+}
+
+export interface MultipleValueNode extends BaseASTNode {
+  type: ASTNodeType.MultipleValue;
+  values: ValueResolvable[];
 }
 
 export type FunctionNode = AnonymousFunctionNode | NamedFunctionNode;
@@ -130,7 +161,7 @@ export interface ReturnNode extends BaseASTNode {
 export interface AssignmentExpressionNode extends BaseASTNode {
   type: ASTNodeType.Assignment;
   operator: '=' | '+=' | '-=' | '*=' | '/=' | '%=' | '^=';
-  left: IdentifierResolvable;
+  left: IdentifierResolvable | MultipleValueNode;
   right: ValueResolvable;
 }
 
@@ -160,6 +191,25 @@ export interface IfNode extends BaseASTNode {
 
   else: IfNode | ASTNode[] | null;
 }
+
+export interface NumericForNode extends BaseASTNode {
+  type: ASTNodeType.NumericFor;
+  variable: IdentifierNode;
+  start: ValueResolvable;
+  end: ValueResolvable;
+  step: ValueResolvable | null;
+  body: ASTNode[];
+}
+
+export interface GenericForNode extends BaseASTNode {
+  type: ASTNodeType.GenericFor;
+  iterator: ValueResolvable;
+  variables: IdentifierNode[];
+  body: ASTNode[];
+}
+
+export type ForNode = NumericForNode | GenericForNode;
+
 export interface WhileNode extends BaseASTNode {
   type: ASTNodeType.While;
   condition: ValueResolvable;
@@ -173,25 +223,6 @@ export interface RepeatNode extends BaseASTNode {
 }
 
 export type IdentifierResolvable = IdentifierNode | IndexPropertyNode;
-
-export type ASTNode =
-  | VariableDeclarationNode
-  | TableItemNode
-  | ExpressionCallNode
-  | TableNode
-  | IndexPropertyNode
-  | ReturnNode
-  | LiteralNode
-  | ConcatExpressionNode
-  | FunctionNode
-  | IdentifierNode
-  | BinaryExpressionNode
-  | AssignmentExpressionNode
-  | LogicalExpressionNode
-  | NotExpressionNode
-  | WhileNode
-  | RepeatNode
-  | IfNode;
 
 /**
  * Parses a stream of tokens into an Abstract Syntax Tree for interpretation.
@@ -210,6 +241,7 @@ export class Parser {
   debug = false;
   lastCreatedNode: ASTNode | null = null;
   maxTokens = Number.MAX_VALUE;
+  blacklistedOperators: string[] = [];
 
   constructor(public tokens: string[], options?: { debug?: boolean; maxTokens?: number }) {
     if (options?.debug) this.debug = true;
@@ -265,16 +297,16 @@ export class Parser {
    * @param type The expected type string
    * @returns True if the node is of the specified type, false otherwise
    */
-  isNodeType<T extends ASTNode, U extends T extends { type: infer V } ? V : never>(node: T | null, type: U): node is Extract<T, { type: U }> {
-    return node?.type === type;
+  isNodeType<T extends ASTNode, U extends T extends { type: infer V } ? V : never>(node: T | null, ...type: U[]): node is Extract<T, { type: U }> {
+    return type.includes(node?.type as U);
   }
 
   /**
    * Helper to assert the next token is a valid identifier and return it
    */
-  expectIdentifier(): string {
+  expectIdentifier(errorMessage?: string): string {
     const t = this.next();
-    if (!this.isIdentifier(t)) throw new Error(`Expected identifier but got '${t}'`);
+    if (!this.isIdentifier(t)) throw new Error(errorMessage || `Expected identifier but got '${t}'`);
     return t;
   }
 
@@ -285,6 +317,7 @@ export class Parser {
     const validTypes = [
       ASTNodeType.Literal,
       ASTNodeType.ConcatExpression,
+      ASTNodeType.MultipleValue,
       ASTNodeType.Function,
       ASTNodeType.Identifier,
       ASTNodeType.Table,
@@ -340,11 +373,27 @@ export class Parser {
   /**
    * Helper to create a VariableDeclaration node
    */
-  createVariableDeclarationNode(name: string, value: ValueResolvable): VariableDeclarationNode {
+  createVariableDeclarationNode(nameOrIdentifier: string | IdentifierNode | MultipleValueNode, value: ValueResolvable): VariableDeclarationNode {
+    if(typeof nameOrIdentifier !== 'string') 
+      if(nameOrIdentifier.type === ASTNodeType.MultipleValue || value.type === ASTNodeType.MultipleValue) {
+        if(nameOrIdentifier.type !== value.type) throw new Error('Mismatched multiple value assignment');
+        if((nameOrIdentifier as MultipleValueNode).values.length !== (value as MultipleValueNode).values.length) throw new Error('Mismatched number of values in multiple value assignment');
+      }
+      
     return this.createNode({
       type: ASTNodeType.VariableDeclaration,
-      name,
+      identifier: typeof nameOrIdentifier === 'string' ? this.createIdentifierNode(nameOrIdentifier) : nameOrIdentifier,
       value
+    });
+  }
+
+  /**
+   * Helper to create a MultipleValue node
+   */
+  createMultipleValueNode(values: ValueResolvable[]): MultipleValueNode {
+    return this.createNode({
+      type: ASTNodeType.MultipleValue,
+      values
     });
   }
 
@@ -353,14 +402,14 @@ export class Parser {
    */
   isNextTokenOperator(): boolean {
     const peekFirstChar = (this.peek() ?? '')[0];
-    return [...tokens.operators, 'and', 'or', 'not', '.', '[', '('].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
+    return [...tokens.operators, 'and', 'or', 'not', '.', ',', '[', '('].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
   }
 
   /**
    * handles tokens that satisfy `isNextTokenOperator()`
    */
   handleOperator(): ASTNode | null {
-    while(this.isNextTokenOperator()) {
+    while(this.isNextTokenOperator() && !this.blacklistedOperators.includes(this.peek() ?? '')) {
       const operator = this.next();
       switch(operator) {
         case '+':
@@ -421,28 +470,41 @@ export class Parser {
         case '^=':
           const leftNode = this.lastCreatedNode;
           if (!leftNode) throw new Error('No left-hand side for assignment');
-          if (!this.isNodeType(leftNode, ASTNodeType.Identifier) && !this.isNodeType(leftNode, ASTNodeType.IndexProperty)) throw new Error('Left-hand side of assignment must be an identifier or index property');
+          if (!this.isNodeType(leftNode, ASTNodeType.Identifier, ASTNodeType.IndexProperty, ASTNodeType.MultipleValue)) throw new Error('Left-hand side of assignment must be an identifier or index property');
           const rightValue = this.parseValue(this.next());
           if (!rightValue || !this.isValueResolvable(rightValue)) throw new Error('Right-hand side of assignment must be a value');
 
-          const assignmentNode: AssignmentExpressionNode = {
+          this.createNode({
             type: ASTNodeType.Assignment,
             operator,
             left: leftNode,
             right: rightValue,
-          };
-          this.pushNode(assignmentNode);
+          });
+          break;
+        
+        case ',':
+          const variables = [this.lastCreatedNode as ValueResolvable];
+
+          this.back(); // step back to re-process the last value
+          while(this.peek() === ',') {
+            this.next(); // consume the comma
+            const nextValue = this.parseValue(this.next(), ['=']);
+            if (!nextValue || !this.isValueResolvable(nextValue)) throw new Error(`Right operand is not a value for operator ',' ${JSON.stringify(nextValue)}`);
+            variables.push(nextValue);
+          }
+          this.createNode({
+            type: ASTNodeType.MultipleValue,
+            values: variables,
+          });
+
+
           break;
 
         case '.': {
-          const tableToken = this.lastCreatedNode as IdentifierResolvable;
-          const indexToken = this.next();
-          if(!indexToken || !this.isIdentifier(indexToken)) throw new Error('Expected identifier after .');
-
           this.createNode({
             type: ASTNodeType.IndexProperty,
-            table: tableToken,
-            property: this.createIdentifierNode(indexToken),
+            table: this.lastCreatedNode as IdentifierResolvable,
+            property: this.createIdentifierNode(this.expectIdentifier(`Expected identifier after ., got '${this.peek()}'`)),
           });
           break;
         }
@@ -461,15 +523,10 @@ export class Parser {
           break;
 
         case '[':
-
-          const tableToken = this.lastCreatedNode as IdentifierResolvable;
-          const key = this.parseValue(this.next());
-          this.expect(']');
-
           const indexNode: IndexPropertyNode = this.createNode({
             type: ASTNodeType.IndexProperty,
-            table: tableToken,
-            property: key,
+            table: this.lastCreatedNode as IdentifierResolvable,
+            property: ((p = this.parseValue(this.next())) => (this.expect(']'), p))(),
           });
           this.pushNode(indexNode);
           break;
@@ -477,19 +534,17 @@ export class Parser {
         case '(':
           const funcToken = this.lastCreatedNode as IdentifierResolvable;
           const params = this.parseCalledFunctionOrMethodParams();
-          const callNode: ExpressionCallNode = this.createNode({
+          this.createNode({
             type: ASTNodeType.ExpressionCall,
             id: funcToken,
             params,
           });
-          this.pushNode(callNode);
           break;
 
         default:
           throw new Error(`Unhandled operator: ${operator}`);
       }
     }
-    if(this.isNextTokenOperator()) return this.handleOperator();
     return this.lastCreatedNode;
   }
 
@@ -548,10 +603,47 @@ export class Parser {
         return;
       }
 
+      case 'for': {
+        const variable = this.createIdentifierNode(this.expectIdentifier());
+        this.blacklistedOperators.push(',');
+        if(this.peek() === '=') {
+          this.next(); // consume '='
+          const start = this.parseValue(this.next());
+          this.expect(',');
+          const end = this.parseValue(this.next());
+          const step: ValueResolvable | null = this.peek() === ',' ? (this.next(), this.parseValue(this.next())) : null;
+          this.expect('do');
+          this.pushNode(this.createNode({
+            type: ASTNodeType.NumericFor,
+            variable,
+            start,
+            end,
+            step,
+            body: [],
+          }));
+        } else if(this.peek() === ',') {
+          const variableNames = [variable];
+          while(this.peek() === ',') {
+            this.next(); // consume ','
+            variableNames.push(this.createIdentifierNode(this.next()));
+          }
+          this.expect('in');
+          this.pushNode(this.createNode({
+            type: ASTNodeType.GenericFor,
+            iterator: this.parseValue(this.next()),
+            variables: variableNames,
+            body: [],
+          }));
+          this.expect('do');
+        }
+        this.blacklistedOperators.pop();
+        const forNode = this.lastCreatedNode as ForNode;
+        this.parseBlockBody(forNode, forNode.body, ['end']);
+        return;
+      }
+
       case 'while': {
-        this.expect('(');
-        const condition = this.peek() == ')' ? this.createLiteralNode(true, 'true') : this.parseValue(this.next());
-        this.expect(')');
+        const condition = this.parseValue(this.next());
         this.expect('do');
         this.pushNode(this.createNode({
           type: ASTNodeType.While,
@@ -592,7 +684,7 @@ export class Parser {
 
       default:
         let potentialValue = this.parseValue(token); // Handles literals, functions, and tables
-        if ([ASTNodeType.Function, ASTNodeType.ExpressionCall].includes(potentialValue.type)) {
+        if ([ASTNodeType.Function, ASTNodeType.ExpressionCall, ASTNodeType.Assignment].includes(potentialValue.type)) {
           this.pushNode(potentialValue);
           return potentialValue;
         } else if (!potentialValue) console.warn(`Unrecognized token: ${token}`);
@@ -610,17 +702,17 @@ export class Parser {
       return this.pushNode(funcNode);
     }
     
-    const variableName = this.expectIdentifier();
+    const identifier = this.parseValue(this.expectIdentifier(), ['=']) as VariableDeclarationNode["identifier"];
     let initializer: ValueResolvable | null = null;
     if (this.peek() === '=') {
-      this.log(`Found initializer for variable '${variableName}'`);
       this.next(); // consume '='
-      const look = this.peek();
-      this.log(`Next token after '=': ${look}`);
       initializer = this.parseValue(this.next());
-    } else initializer = this.createNullLiteralNode();
+    } else initializer = identifier.type === ASTNodeType.MultipleValue
+            ? this.createMultipleValueNode(new Array(identifier.values.length).fill(this.createNullLiteralNode()))
+            : this.createNullLiteralNode();
     
-    const variableNode = this.createVariableDeclarationNode(variableName, initializer);
+    
+    const variableNode = this.createVariableDeclarationNode(identifier, initializer);
     this.log(`Created variable node: ${JSON.stringify(variableNode)}`, variableNode);
     this.pushNode(variableNode);
   }
@@ -684,6 +776,7 @@ export class Parser {
    * Parses function parameters declaration and returns an array of FunctionParameterNode.
    */
   parseParamsDeclaration() {
+    this.blacklistedOperators.push(',');
     this.log(`Parsing function parameters`);
     const paramValues: FunctionParameterNode[] = [];
     if(this.currentToken !== '(') this.expect('(');
@@ -697,6 +790,7 @@ export class Parser {
       if (this.peek() === ',') this.next();
     }
     this.expect(')');
+    this.blacklistedOperators.pop();
     return paramValues;
   }
 
@@ -724,6 +818,7 @@ export class Parser {
    * Assumes the caller has already consumed the function/method name.
    */
   parseCalledFunctionOrMethodParams() {
+    this.blacklistedOperators.push(',');
     if (this.currentToken !== '(' && this.next() !== '(') throw new Error("Expected '(' after function name");
     const paramValues: ValueResolvable[] = [];
     while (this.peek() !== ')') {
@@ -733,6 +828,7 @@ export class Parser {
       if (this.peek() === ',') this.next();
     }
     this.expect(')');
+    this.blacklistedOperators.pop();
     return paramValues;
   }
 
@@ -754,13 +850,9 @@ export class Parser {
       return callNode;
     }
 
-    let encapsulatedStatement: ValueResolvable | null = null;
-    while(this.peek() !== ')') {
-      const statement = this.parseNextStatement();
-      if(statement && this.isValueResolvable(statement)) encapsulatedStatement = statement;
-    }
-    this.expect(')');
+    let encapsulatedStatement: ValueResolvable | null = this.parseValue(this.next());
     if(!encapsulatedStatement) throw new Error('Empty bracket statement');
+    this.expect(')');
     return encapsulatedStatement;
   }
 
@@ -789,10 +881,10 @@ export class Parser {
    * Parses a table from the token stream and returns the resulting TableNode.
    */
   parseTable() {
-    this.log(`Parsing table`);
     if(this.currentToken !== '{') this.expect('{');
+    this.blacklistedOperators.push(',')
 
-    const tableNode: TableNode = { type: ASTNodeType.Table, properties: [] };
+    const propertyNodes: TableItemNode[] = [];
 
     while (this.peek() !== '}' && this.currentTokenIndex < this.tokens.length - 1) {
       const token = this.next();
@@ -821,12 +913,16 @@ export class Parser {
         const value = this.parseValue(token);
         propertyNode = this.createArrayItemNode(value);
       }
-      tableNode.properties.push(propertyNode);
+      propertyNodes.push(propertyNode);
       // consume separator. (not present after last item)
       if (this.peek() === ',' || this.peek() === ';') this.next();
     }
     this.expect('}');
-    return tableNode;
+    this.blacklistedOperators.pop();
+    return this.createNode({
+      type: ASTNodeType.Table,
+      properties: propertyNodes,
+    });
   }
 
   /**
@@ -840,9 +936,10 @@ export class Parser {
    * Parses a value, which could be a literal, identifier, function, or table.  
    * Returns the resulting ValueResolvable node.
    */
-  parseValue(token: string): ValueResolvable {
+  parseValue(token: string, blacklistedOperators: string[] = []): ValueResolvable {
+    this.blacklistedOperators.push(...blacklistedOperators);
     if (!token) throw new Error('Unexpected end of input while parsing value');
-    let returnValue: ValueResolvable;
+    let returnValue: ValueResolvable | null = null;
     if (this.isStringLiteral(token)) {
       returnValue = this.createLiteralNode(this.parseStringLiteral(token), token);
     } else if (!isNaN(Number(token))) {
@@ -863,18 +960,17 @@ export class Parser {
       this.back();
       returnValue = this.handleOperator() as NotExpressionNode;
     } else if (this.isIdentifier(token)) {
-      if(!this.isKeyToken(token)) {
-        const indentifierNode = this.createIdentifierNode(token);
-        if (this.peek() === '(') {
-          this.next();
-          returnValue = this.parseBracketStatement() as ExpressionCallNode;
-        } else returnValue = indentifierNode;
-      } else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
-    } else throw new Error(`Unexpected token while parsing value: ${token}`);
-    if(this.isNextTokenOperator()) returnValue = this.handleOperator() as ValueResolvable;
+      if(!this.isKeyToken(token)) returnValue = this.createIdentifierNode(token);
+      else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
+    }
+    if(!this.blacklistedOperators.includes(this.peek() ?? '')) {
+      if(this.isNextTokenOperator()) returnValue = this.handleOperator() as ValueResolvable;
+    }
     
-    
-    return returnValue;
+    if(!returnValue) throw new Error(`Unexpected token while parsing value: ${token}, ${this.peek()}, ${JSON.stringify(this.lastCreatedNode)}`);
+
+    for(let i = 0; i < blacklistedOperators.length; i++) this.blacklistedOperators.pop();
+    return this.lastCreatedNode as ValueResolvable;
   }
 
   /**

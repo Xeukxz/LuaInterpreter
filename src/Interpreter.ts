@@ -8,6 +8,7 @@ import {
   IfNode,
   IndexPropertyNode,
   LogicalExpressionNode,
+  MultipleValueNode,
   NamedFunctionNode,
   TableDictItemNode,
   TableNode,
@@ -17,26 +18,37 @@ import {
 
 type LuaPrimitive = string | number | boolean | null;
 
+enum NonPrimitiveKind {
+  Table = 'table',
+  Function = 'function',
+  BuiltinFunction = 'builtin',
+  MultipleValue = 'multipleValue',
+}
+
 interface LuaTableValue {
-  kind: 'table';
-  sequence: RuntimeValue[];
+  kind: NonPrimitiveKind.Table;
   entries: Map<any, RuntimeValue>;
 }
 
 interface UserFunctionValue {
-  kind: 'function';
+  kind: NonPrimitiveKind.Function;
   node: FunctionNode;
   closure: Environment;
 }
 
 interface BuiltinFunctionValue {
-  kind: 'builtin';
+  kind: NonPrimitiveKind.BuiltinFunction;
   name: string;
   impl: (interpreter: Interpreter, args: RuntimeValue[]) => RuntimeValue;
 }
 
+interface MultipleValue {
+  kind: NonPrimitiveKind.MultipleValue;
+  values: RuntimeValue[];
+}
+
 type RuntimeFunction = UserFunctionValue | BuiltinFunctionValue;
-type RuntimeValue = LuaPrimitive | LuaTableValue | RuntimeFunction;
+type RuntimeValue = LuaPrimitive | LuaTableValue | RuntimeFunction | MultipleValue;
 
 /**
  * Represents a variable scope/environment, supporting nested scopes via a parent reference.
@@ -155,9 +167,16 @@ export class Interpreter {
           if (!this.isTable(tableValue)) throw new Error('Attempt to index a non-table value');
           const key = node.left.property.type === 'Identifier' ? node.left.property.name : this.evaluateValue(node.left.property, env);
           tableValue.entries.set(key, value);
+        } else if(node.left.type === ASTNodeType.MultipleValue) {
+          const evaluatedValue = this.evaluateValue(node.right, env);
+          if(!this.isMultipleValue(evaluatedValue)) throw new Error('Right-hand side does not evaluate to multiple values');
+          if(node.left.values.length !== evaluatedValue.values.length) throw new Error('Mismatched number of values in multiple assignment');
+          this.assignMultipleValues(node.left.values as IdentifierNode[], evaluatedValue, env);
         }
         return value;
       }
+      case ASTNodeType.MultipleValue: 
+        return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.LogicalExpression: {
         const left = this.evaluateValue(node.left, env);
         const right = this.evaluateValue(node.right, env);
@@ -172,14 +191,49 @@ export class Interpreter {
       }
       case ASTNodeType.NotExpression:
         return this.evaluateValue(node, env); // Handled in evaluateValue
-      case ASTNodeType.While: {
-        while (this.evaluateValue(node.condition, env)) 
-          for (const statement of node.body) this.interpretNode(statement, env);
+      case ASTNodeType.NumericFor: {
+        const start = this.evaluateValue(node.start, env);
+        const end = this.evaluateValue(node.end, env);
+        const step = node.step ? this.evaluateValue(node.step, env) : 1;
+        if (typeof start !== 'number' || typeof end !== 'number' || typeof step !== 'number') 
+          throw new Error('Numeric for loop expects numeric start, end, and step values');
+
+        for (let i = start; step > 0 ? i <= end : i >= end; i += step) {
+          const loopEnv = new Environment(env);
+          loopEnv.define(node.variable.name, i);
+          for (const statement of node.body) this.interpretNode(statement, loopEnv);
+        }
         return;
       }
-      case ASTNodeType.Repeat: 
+      case ASTNodeType.GenericFor: {
+        const iterator = this.evaluateValue(node.iterator, env);
+        if (!this.isFunction(iterator)) throw new Error('Generic for loop iterator is not a function');
+        const loopEnv = new Environment(env);
+        while (true) {
+          const result = this.callFunction(iterator, (node.iterator as ExpressionCallNode).params.map(param => this.evaluateValue(param, env)));
+          if (result === null) break;
+          if (this.isMultipleValue(result)) this.assignMultipleValues(node.variables, result, loopEnv);
+          else {
+            for(let i = 0; i < node.variables.length; i++) {
+              const varName = node.variables[i].name;
+              loopEnv.define(varName, result ?? null);
+            }
+          }
+          for (const statement of node.body) this.interpretNode(statement, loopEnv);
+        }
+        return;
+      }
+      case ASTNodeType.While: {
+        while (this.evaluateValue(node.condition, env)) {
+          const loopEnv = new Environment(env);
+          for (const statement of node.body) this.interpretNode(statement, loopEnv);
+        }
+        return;
+      }
+      case ASTNodeType.Repeat:
         do {
-          for (const statement of node.body) this.interpretNode(statement, env);
+          const loopEnv = new Environment(env);
+          for (const statement of node.body) this.interpretNode(statement, loopEnv);
         } while (!this.evaluateValue(node.condition, env));
         return;
       
@@ -199,6 +253,16 @@ export class Interpreter {
     }
   }
 
+  assignMultipleValues(targets: IdentifierNode[], values: MultipleValue, env: Environment) {
+    if (!Array.isArray(targets) || !Array.isArray(values.values)) throw new Error('Targets and values must be arrays');
+
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      const value = values.values[i] ?? null;
+      env.define(target.name, value);
+    }
+  }
+
   /**
    * Gets a global variable by name from the global environment.
    */
@@ -211,7 +275,8 @@ export class Interpreter {
    */
   interpretVariableDeclaration(node: VariableDeclarationNode, env: Environment): RuntimeValue {
     const value = this.evaluateValue(node.value, env);
-    return env.define(node.name, value), value;
+    if(node.identifier.type === ASTNodeType.MultipleValue) return this.assignMultipleValues(node.identifier.values as IdentifierNode[], value as MultipleValue, env), value;
+    return env.define(node.identifier.name, value), value;
   }
 
   /**
@@ -241,8 +306,12 @@ export class Interpreter {
   /**
    * Evaluates an identifier or index property node to retrieve its value from the environment or table.
    */
-  evaluateIdentifierResolvable(node: IdentifierNode | IndexPropertyNode, env: Environment): RuntimeValue {
-    return node.type === 'Identifier' ? this.resolveIdentifier(node, env) : this.resolveIndexProperty(node, env);
+  evaluateIdentifierResolvable(node: IdentifierNode | IndexPropertyNode | MultipleValueNode, env: Environment): RuntimeValue {
+    return node.type === 'Identifier' 
+            ? this.resolveIdentifier(node, env) 
+            : node.type === ASTNodeType.MultipleValue
+              ? this.resolveIndexProperty(node as any, env)
+              : this.resolveIndexProperty(node, env);
   }
 
   /**
@@ -287,7 +356,6 @@ export class Interpreter {
       case ASTNodeType.Table:
         return this.buildTable(node, env);
       case ASTNodeType.BinaryExpression:
-        // console.log('Evaluating binary expression', node);
         return this.evaluateBinaryExpression(node, env);
       case ASTNodeType.ExpressionCall:
         return this.interpretExpressionCall(node, env);
@@ -297,6 +365,11 @@ export class Interpreter {
         return this.evaluateLogicalExpression(node, env);
       case ASTNodeType.NotExpression:
         return !this.evaluateValue(node.operand, env);
+      case ASTNodeType.MultipleValue:
+        return {
+          kind: NonPrimitiveKind.MultipleValue,
+          values: node.values.map(val => this.evaluateValue(val, env)),
+        };
       default: {
         const exhaustive: never = node; exhaustive;
         throw new Error(`Unsupported value node type '${(node as ASTNode).type}'`);
@@ -309,7 +382,7 @@ export class Interpreter {
    */
   createUserFunction(node: FunctionNode, env: Environment): UserFunctionValue {
     return {
-      kind: 'function',
+      kind: NonPrimitiveKind.Function,
       node,
       closure: env,
     };
@@ -319,7 +392,7 @@ export class Interpreter {
    * Calls a function (builtin or user-defined) with the provided arguments.
    */
   callFunction(fn: RuntimeFunction, args: RuntimeValue[]): RuntimeValue {
-    return fn.kind === 'builtin' ? fn.impl(this, args) : this.callUserFunction(fn, args);
+    return fn.kind === NonPrimitiveKind.BuiltinFunction ? fn.impl(this, args) : this.callUserFunction(fn, args);
   }
 
   /**
@@ -352,8 +425,7 @@ export class Interpreter {
    */
   buildTable(node: TableNode, env: Environment): LuaTableValue {
     const table: LuaTableValue = {
-      kind: 'table',
-      sequence: [],
+      kind: NonPrimitiveKind.Table,
       entries: new Map<any, RuntimeValue>(),
     };
 
@@ -361,7 +433,6 @@ export class Interpreter {
     for (const property of node.properties) {
       if (property.type === 'TableListItem') {
         const value = this.evaluateValue(property.value, env);
-        table.sequence.push(value);
         table.entries.set(sequenceIndex, value);
         sequenceIndex++;
       } else {
@@ -448,14 +519,18 @@ export class Interpreter {
    * Checks if a value is a function (either user-defined or built-in).
    */
   isFunction(value: RuntimeValue): value is RuntimeFunction {
-    return typeof value === 'object' && value !== null && ('kind' in value) && (value.kind === 'function' || value.kind === 'builtin');
+    return typeof value === 'object' && value !== null && ('kind' in value) && (value.kind === NonPrimitiveKind.Function || value.kind === NonPrimitiveKind.BuiltinFunction);
   }
 
   /**
    * Checks if a value is a Lua table.
    */
   isTable(value: RuntimeValue): value is LuaTableValue {
-    return typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'table';
+    return typeof value === 'object' && value !== null && 'kind' in value && value.kind === NonPrimitiveKind.Table;
+  }
+
+  isMultipleValue(value: RuntimeValue): value is MultipleValue {
+    return typeof value === 'object' && value !== null && 'kind' in value && value.kind === NonPrimitiveKind.MultipleValue;
   }
 
   /**
@@ -469,16 +544,63 @@ export class Interpreter {
    * Installs built-in functions into the global environment, such as 'print'.
    */
   installBuiltins() {
-    const printFunction: BuiltinFunctionValue = {
-      kind: 'builtin',
+    this.globalEnv.define('print', {
+      kind: NonPrimitiveKind.BuiltinFunction,
       name: 'print',
       impl: (_interpreter, args) => {
         const rendered = args.map((arg) => this.renderValue(arg)).join('\t');
         console.log(rendered);
         return null;
       },
-    };
-    this.globalEnv.define('print', printFunction);
+    });
+    this.globalEnv.define('pairs', {
+      kind: NonPrimitiveKind.BuiltinFunction,
+      name: 'pairs',
+      impl: (_interpreter, args) => {
+        if (args.length === 0 || !_interpreter.isTable(args[0])) {
+          throw new Error('pairs expects a table as its first argument');
+        }
+        const table = args[0] as LuaTableValue;
+        let index = 0;
+        return {
+          kind: NonPrimitiveKind.BuiltinFunction,
+          name: 'ipairs_iterator',
+          impl: () => {
+            const keys = Array.from(table.entries.keys())
+            if (index <= keys.length - 1) {
+              return {
+                kind: NonPrimitiveKind.MultipleValue,
+                values: [keys[index], table.entries.get(keys[index++])!],
+              };
+            } else return null;
+          },
+        } as BuiltinFunctionValue;
+      },
+    });
+    this.globalEnv.define('ipairs', {
+      kind: NonPrimitiveKind.BuiltinFunction,
+      name: 'ipairs',
+      impl: (_interpreter, args) => {
+        if (args.length === 0 || !_interpreter.isTable(args[0])) {
+          throw new Error('ipairs expects a table as its first argument');
+        }
+        const table = args[0] as LuaTableValue;
+        let index = 0;
+        return {
+          kind: NonPrimitiveKind.BuiltinFunction,
+          name: 'ipairs_iterator',
+          impl: () => {
+            index += 1;
+            if (table.entries.has(index)) {
+              return {
+                kind: NonPrimitiveKind.MultipleValue,
+                values: [index, table.entries.get(index)!],
+              };
+            } else return null;
+          },
+        } as BuiltinFunctionValue;
+      },
+    });
   }
 
   /**
@@ -488,15 +610,13 @@ export class Interpreter {
     if (value === null) return 'nil';
     if (typeof value === 'string') return value;
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    if (this.isFunction(value)) return value.kind === 'builtin' ? `[builtin ${value.name}]` : '[function]';
+    if (this.isFunction(value)) return value.kind === NonPrimitiveKind.BuiltinFunction ? `[builtin ${value.name}]` : '[function]';
     if (this.isTable(value)) {
-      const sequence = value.sequence.map((item) => this.renderValue(item)).join(', ');
       const entries: string[] = [];
-      for (const [key, val] of value.entries.entries()) {
-        if (typeof key === 'number' && value.sequence[key - 1] === val) continue;
+      for (const [key, val] of value.entries.entries()) 
         entries.push(`${this.renderTableKey(key)} = ${this.renderValue(val)}`);
-      }
-      const body = [sequence, entries.join(', ')].filter((part) => part.length > 0).join(', ');
+      
+      const body = entries.join(', ')
       return `{${body}}`;
     }
     return '[unknown]';
@@ -508,7 +628,8 @@ export class Interpreter {
   renderTableKey(key: RuntimeValue): string {
     if (key === null) return 'nil';
     if (typeof key === 'string') return key;
-    if (typeof key === 'number' || typeof key === 'boolean') return String(key);
+    if (typeof key === 'number' || typeof key === 'boolean') return `[${String(key)}]`;
+    if (typeof key === 'boolean') return `[${String(key)}]`;
     if (this.isFunction(key)) return '[function]';
     if (this.isTable(key)) return '[table]';
     return '[unknown]';

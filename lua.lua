@@ -35,7 +35,7 @@ end
 local i = 0
 -- i = i
 i = i + 1
-while( i < 5 ) do
+while i < 5  do
   i = i + 1
 
   if i > 3 then
@@ -63,12 +63,18 @@ repeat
   repeatCount = repeatCount + 1
 until repeatCount > 5
 
+for i = 1, 3, 1 do
+  print("for loop iteration:", i)
+end
+print(i) -- 5 (for loop redeclares i locally)
+
 print(foo()) -- 9
 print(FooGlobal) -- global foo
 print(table.key1) -- value1
 print(table["key2"]) -- 42
 print(table[1]) -- key4
 print(table[10]) -- ten
+print(table[true]) -- boolKey
 print(table.key8) -- { nestedKey = "nestedValue", nestedArr = {1, 2, 3} }
 print(table.key8.nestedKey) -- nestedValue
 print(true and true) -- true
@@ -79,3 +85,18 @@ print(not false) -- true
 print(not not true) -- true
 print("concat" .. "enation") -- concatenation
 print(not function() end) -- true
+print(table)
+
+print("---- pairs ----")
+for k, v in pairs(table) do
+  print(k, v)
+end
+print("---- ipairs ----")
+for i, v in ipairs(table) do
+  print(i, v)
+end
+
+local v1, v2 = 10, 20
+print('unswapped:', v1, v2) -- 20 10
+v1, v2 = v2, v1 -- swap values
+print('swapped:', v1, v2) -- 10 20

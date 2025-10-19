@@ -24,7 +24,6 @@ export class Lexer {
   }
 
   constructor(public lua: string, public debug = false) {
-    if(this.debug) console.log(lua.length);
     while (this.charIndex < lua.length) {
       this.pushNextToken();
     }
@@ -43,7 +42,6 @@ export class Lexer {
     if(this.checkForAndPushString()) return;
 
     const char = this.char;
-    if(this.debug) console.log(`Current char: ${char} at index ${this.charIndex}`);
     
     // check for and combine consecutive operators
     if(multiSymbolOperators.includes(char)) {
@@ -67,7 +65,6 @@ export class Lexer {
     // Check for keywords or identifiers
     let identifier = "";
     while(/[a-zA-Z_\d]/.test(this.peek(0)) && this.charIndex < this.lua.length) {
-      if(this.debug) console.log(`Building identifier: ${identifier}${this.peek(0)}`);
       identifier += this.peek(0);
       this.charIndex++;
     }
@@ -109,7 +106,6 @@ export class Lexer {
     let i = this.charIndex;
     while (i < this.lua.length) {
       let stringChar = this.lua[i];
-      if(this.debug) console.log(`Parsing string, current char: ${stringChar}, looking for ending: ${endingChars}`);
       
       // handle escape characters
       if(stringChar == '\\') string += this.lua[++i], i++, stringChar = this.lua[i];
@@ -166,7 +162,6 @@ export class Lexer {
    * @param token The token string to push.
    */
   pushToken(token: string) {
-    if(this.debug) console.log(`Pushing token: ${token} | index: ${this.charIndex}`);
     this.tokens.push(token);
     this.nextToken = this.lua[this.charIndex + 1]  || "";
   }
