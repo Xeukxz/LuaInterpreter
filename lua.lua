@@ -116,3 +116,16 @@ while true do
     break
   end
 end
+
+local function func()
+  return 40, 50
+end
+
+local function func2()
+  return 30, func()
+end
+
+---@diagnostic disable-next-line: unbalanced-assignments
+local mv1, mv2, mv3, mv4, mv5, mv6 = 10, 20, func2(), 60
+
+print(mv1, mv2, mv3, mv4, mv5, mv6) -- 10 20 30 40 50 60

@@ -386,12 +386,6 @@ export class Parser {
    * Helper to create a VariableDeclaration node
    */
   createVariableDeclarationNode(nameOrIdentifier: string | IdentifierNode | MultipleValueNode, value: ValueResolvable): VariableDeclarationNode {
-    if(typeof nameOrIdentifier !== 'string') 
-      if(nameOrIdentifier.type === ASTNodeType.MultipleValue || value.type === ASTNodeType.MultipleValue) {
-        if(nameOrIdentifier.type !== value.type) throw new Error('Mismatched multiple value assignment');
-        if((nameOrIdentifier as MultipleValueNode).values.length !== (value as MultipleValueNode).values.length) throw new Error('Mismatched number of values in multiple value assignment');
-      }
-      
     return this.createNode({
       type: ASTNodeType.VariableDeclaration,
       identifier: typeof nameOrIdentifier === 'string' ? this.createIdentifierNode(nameOrIdentifier) : nameOrIdentifier,
@@ -500,7 +494,7 @@ export class Parser {
           this.back(); // step back to re-process the last value
           while(this.peek() === ',') {
             this.next(); // consume the comma
-            const nextValue = this.parseValue(this.next(), ['=']);
+            const nextValue = this.parseValue(this.next(), ['=', ',']);
             if (!nextValue || !this.isValueResolvable(nextValue)) throw new Error(`Right operand is not a value for operator ',' ${JSON.stringify(nextValue)}`);
             variables.push(nextValue);
           }

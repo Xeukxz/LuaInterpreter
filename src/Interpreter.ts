@@ -288,7 +288,11 @@ export class Interpreter {
 
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i];
-      const value = values.values[i] ?? null;
+      let value = values.values[i] ?? null;
+      if (this.isMultipleValue(value)) {
+        for(let j = 1; j < value.values.length; j++) values.values.splice(i + j, 0, value.values[j]);
+        value = value.values[0] ?? null;
+      }
       env.define(target.name, value);
     }
   }
