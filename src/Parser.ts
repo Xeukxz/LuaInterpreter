@@ -19,6 +19,7 @@ export enum ASTNodeType {
   IndexProperty = 'IndexProperty',
   Function = 'Function',
   Parameter = 'Parameter',
+  Break = 'Break',
   Return = 'Return',
   ExpressionCall = 'ExpressionCall',
   BinaryExpression = 'BinaryExpression',
@@ -58,6 +59,7 @@ export type ASTNode =
   | TableItemNode
   | IndexPropertyNode
   | FunctionNode
+  | BreakNode
   | ReturnNode
   | ExpressionCallNode
   | BinaryExpressionNode
@@ -151,6 +153,10 @@ export interface IndexPropertyNode extends BaseASTNode {
   type: ASTNodeType.IndexProperty;
   table: IdentifierResolvable;
   property: ValueResolvable;
+}
+
+export interface BreakNode extends BaseASTNode {
+  type: ASTNodeType.Break;
 }
 
 export interface ReturnNode extends BaseASTNode {
@@ -271,6 +277,9 @@ export class Parser {
     return t;
   }
 
+  /**
+   * Checks if the supplied token is a string literal
+   */
   isStringLiteral(token: string) {
     const opening = token.match(/^("|'|\[\[)/)?.[1];
     if (!opening) return false;
@@ -279,6 +288,9 @@ export class Parser {
     return true;
   }
 
+  /**
+   * Parses a string literal token and returns its content
+   */
   parseStringLiteral(token: string) {
     if (!this.isStringLiteral(token)) throw new Error(`Token is not a string literal: ${token}`);
     return token[0] === '[' ? token.slice(2, -2) : token.slice(1, -1);
@@ -667,6 +679,12 @@ export class Parser {
         repeatNode.condition = this.parseValue(this.next());
         return;
       }
+
+      case 'break':
+        this.pushNode(this.createNode({
+          type: ASTNodeType.Break,
+        }));
+        return;
 
       case 'return':
         const returnNode: ReturnNode = {

@@ -110,6 +110,11 @@ class Environment {
 }
 
 /**
+ * Signal used to handle break statements in loops.
+ */
+class BreakSignal {}
+
+/**
  * Signal used to handle return statements in function execution.
  */
 class ReturnSignal {
@@ -150,6 +155,8 @@ export class Interpreter {
         return this.resolveIdentifier(node, env);
       case ASTNodeType.IndexProperty:
         return this.resolveIndexProperty(node, env);
+      case ASTNodeType.Break:
+        throw new BreakSignal();
       case ASTNodeType.Return:
         throw new ReturnSignal(node.value ? this.evaluateValue(node.value, env) : null);
       case ASTNodeType.BinaryExpression:
@@ -192,49 +199,69 @@ export class Interpreter {
       case ASTNodeType.NotExpression:
         return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.NumericFor: {
-        const start = this.evaluateValue(node.start, env);
-        const end = this.evaluateValue(node.end, env);
-        const step = node.step ? this.evaluateValue(node.step, env) : 1;
-        if (typeof start !== 'number' || typeof end !== 'number' || typeof step !== 'number') 
-          throw new Error('Numeric for loop expects numeric start, end, and step values');
+        try {
+          const start = this.evaluateValue(node.start, env);
+          const end = this.evaluateValue(node.end, env);
+          const step = node.step ? this.evaluateValue(node.step, env) : 1;
+          if (typeof start !== 'number' || typeof end !== 'number' || typeof step !== 'number') 
+            throw new Error('Numeric for loop expects numeric start, end, and step values');
 
-        for (let i = start; step > 0 ? i <= end : i >= end; i += step) {
-          const loopEnv = new Environment(env);
-          loopEnv.define(node.variable.name, i);
-          for (const statement of node.body) this.interpretNode(statement, loopEnv);
+          for (let i = start; step > 0 ? i <= end : i >= end; i += step) {
+            const loopEnv = new Environment(env);
+            loopEnv.define(node.variable.name, i);
+            for (const statement of node.body) this.interpretNode(statement, loopEnv);
+          }
+        } catch (error) {
+          if (error instanceof BreakSignal) return;
+          throw error;
         }
         return;
       }
       case ASTNodeType.GenericFor: {
-        const iterator = this.evaluateValue(node.iterator, env);
-        if (!this.isFunction(iterator)) throw new Error('Generic for loop iterator is not a function');
-        const loopEnv = new Environment(env);
-        while (true) {
-          const result = this.callFunction(iterator, (node.iterator as ExpressionCallNode).params.map(param => this.evaluateValue(param, env)));
-          if (result === null) break;
-          if (this.isMultipleValue(result)) this.assignMultipleValues(node.variables, result, loopEnv);
-          else {
-            for(let i = 0; i < node.variables.length; i++) {
-              const varName = node.variables[i].name;
-              loopEnv.define(varName, result ?? null);
+        try {
+          const iterator = this.evaluateValue(node.iterator, env);
+          if (!this.isFunction(iterator)) throw new Error('Generic for loop iterator is not a function');
+          const loopEnv = new Environment(env);
+          while (true) {
+            const result = this.callFunction(iterator, (node.iterator as ExpressionCallNode).params.map(param => this.evaluateValue(param, env)));
+            if (result === null) break;
+            if (this.isMultipleValue(result)) this.assignMultipleValues(node.variables, result, loopEnv);
+            else {
+              for(let i = 0; i < node.variables.length; i++) {
+                const varName = node.variables[i].name;
+                loopEnv.define(varName, result ?? null);
+              }
             }
+            for (const statement of node.body) this.interpretNode(statement, loopEnv);
           }
-          for (const statement of node.body) this.interpretNode(statement, loopEnv);
+        } catch (error) {
+          if (error instanceof BreakSignal) return;
+          throw error;
         }
         return;
       }
       case ASTNodeType.While: {
-        while (this.evaluateValue(node.condition, env)) {
-          const loopEnv = new Environment(env);
-          for (const statement of node.body) this.interpretNode(statement, loopEnv);
+        try {
+          while (this.evaluateValue(node.condition, env)) {
+            const loopEnv = new Environment(env);
+            for (const statement of node.body) this.interpretNode(statement, loopEnv);
+          }
+        } catch (error) {
+          if (error instanceof BreakSignal) return;
+          throw error;
         }
         return;
       }
       case ASTNodeType.Repeat:
-        do {
-          const loopEnv = new Environment(env);
-          for (const statement of node.body) this.interpretNode(statement, loopEnv);
-        } while (!this.evaluateValue(node.condition, env));
+        try {
+          do {
+            const loopEnv = new Environment(env);
+            for (const statement of node.body) this.interpretNode(statement, loopEnv);
+          } while (!this.evaluateValue(node.condition, env));
+        } catch (error) {
+          if (error instanceof BreakSignal) return;
+          throw error;
+        }
         return;
       
       case ASTNodeType.If: {
@@ -253,6 +280,9 @@ export class Interpreter {
     }
   }
 
+  /**
+   * Assigns multiple values to multiple identifier targets in the given environment.
+   */
   assignMultipleValues(targets: IdentifierNode[], values: MultipleValue, env: Environment) {
     if (!Array.isArray(targets) || !Array.isArray(values.values)) throw new Error('Targets and values must be arrays');
 

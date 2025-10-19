@@ -3,10 +3,10 @@ A Lua interpreter written in TypeScript.
 
 ## Features:
 - Comments
-- Variables
+- Variables/Assignments
 - Literals (numbers, strings, booleans, nil)
 - Tables (array-style and dictionary-style)
 - Functions
 - Arithmetic and logical expressions
-- While loops
+- Loops (while, for, repeat)
 - If statements
