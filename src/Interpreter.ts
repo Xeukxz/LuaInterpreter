@@ -149,8 +149,6 @@ export class Interpreter {
         return this.buildTable(node, env);
       case ASTNodeType.Literal:
         return node.value ?? null;
-      case ASTNodeType.ConcatExpression: 
-        return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.Identifier:
         return this.resolveIdentifier(node, env);
       case ASTNodeType.IndexProperty:
@@ -182,8 +180,6 @@ export class Interpreter {
         }
         return value;
       }
-      case ASTNodeType.MultipleValue: 
-        return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.LogicalExpression: {
         const left = this.evaluateValue(node.left, env);
         const right = this.evaluateValue(node.right, env);
@@ -194,9 +190,12 @@ export class Interpreter {
             return left || right;
           default:
             throw new Error(`Unknown logical operator: ${'operator' in node ? (node as any).operator : 'unknown'}`);
+          }
         }
-      }
+      case ASTNodeType.MultipleValue:
       case ASTNodeType.NotExpression:
+      case ASTNodeType.LengthExpression:
+      case ASTNodeType.ConcatExpression:
         return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.NumericFor: {
         try {
@@ -399,6 +398,15 @@ export class Interpreter {
         return this.evaluateLogicalExpression(node, env);
       case ASTNodeType.NotExpression:
         return !this.evaluateValue(node.operand, env);
+      case ASTNodeType.LengthExpression: {
+        const value = this.evaluateValue(node.operand, env);
+        if(this.isTable(value)) {
+          let index = 0;
+          while (value.entries.has(index + 1)) index++;
+          return index;
+        } else if(typeof value === 'string') return value.length;
+        else throw new Error(`Attempt to get length of a non-table/non-string value`);
+      }
       case ASTNodeType.MultipleValue:
         return {
           kind: NonPrimitiveKind.MultipleValue,

@@ -86,6 +86,8 @@ print(not not true) -- true
 print("concat" .. "enation") -- concatenation
 print(not function() end) -- true
 print(table)
+print(#table)
+print(#str)
 
 print("---- pairs ----")
 for k, v in pairs(table) do

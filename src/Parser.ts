@@ -25,6 +25,7 @@ export enum ASTNodeType {
   BinaryExpression = 'BinaryExpression',
   LogicalExpression = 'LogicalExpression',
   NotExpression = 'NotExpression',
+  LengthExpression = 'LengthExpression',
   NumericFor = 'NumericFor',
   GenericFor = 'GenericFor',
   While = 'While',
@@ -41,6 +42,7 @@ export type ValueResolvableTypesTuple = [
   ASTNodeType.Function,
   ASTNodeType.Identifier,
   ASTNodeType.Table,
+  ASTNodeType.LengthExpression,
   ASTNodeType.BinaryExpression,
   ASTNodeType.LogicalExpression,
   ASTNodeType.NotExpression,
@@ -58,6 +60,7 @@ export type ASTNode =
   | TableNode
   | TableItemNode
   | IndexPropertyNode
+  | LengthNode
   | FunctionNode
   | BreakNode
   | ReturnNode
@@ -153,6 +156,11 @@ export interface IndexPropertyNode extends BaseASTNode {
   type: ASTNodeType.IndexProperty;
   table: IdentifierResolvable;
   property: ValueResolvable;
+}
+
+export interface LengthNode extends BaseASTNode {
+  type: ASTNodeType.LengthExpression;
+  operand: ValueResolvable;
 }
 
 export interface BreakNode extends BaseASTNode {
@@ -333,6 +341,7 @@ export class Parser {
       ASTNodeType.Function,
       ASTNodeType.Identifier,
       ASTNodeType.Table,
+      ASTNodeType.LengthExpression,
       ASTNodeType.BinaryExpression,
       ASTNodeType.LogicalExpression,
       ASTNodeType.NotExpression,
@@ -408,7 +417,7 @@ export class Parser {
    */
   isNextTokenOperator(): boolean {
     const peekFirstChar = (this.peek() ?? '')[0];
-    return [...tokens.operators, 'and', 'or', 'not', '.', ',', '[', '('].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
+    return [...tokens.operators, 'and', 'or', 'not', '.', ',', '[', '(', '#'].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
   }
 
   /**
@@ -525,6 +534,15 @@ export class Parser {
             type: ASTNodeType.ConcatExpression,
             left: concatLeft,
             right: concatRight,
+          });
+          break;
+        
+        case '#':
+          const lengthOperand = this.parseValue(this.next());
+          if(!lengthOperand || !this.isValueResolvable(lengthOperand)) throw new Error(`Operand is not a value for operator '#' ${JSON.stringify(lengthOperand)}`);
+          this.createNode({
+            type: ASTNodeType.LengthExpression,
+            operand: lengthOperand,
           });
           break;
 
@@ -968,9 +986,9 @@ export class Parser {
       const bracketStatement = this.parseBracketStatement();
       if (bracketStatement) returnValue = bracketStatement;
       else throw new Error('Unexpected token while parsing value: ' + token);
-    } else if (token === 'not') {
+    } else if (['#', '-', 'not'].includes(token)) {
       this.back();
-      returnValue = this.handleOperator() as NotExpressionNode;
+      returnValue = this.handleOperator() as ValueResolvable;
     } else if (this.isIdentifier(token)) {
       if(!this.isKeyToken(token)) returnValue = this.createIdentifierNode(token);
       else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
@@ -978,7 +996,6 @@ export class Parser {
     if(!this.blacklistedOperators.includes(this.peek() ?? '')) {
       if(this.isNextTokenOperator()) returnValue = this.handleOperator() as ValueResolvable;
     }
-    
     if(!returnValue) throw new Error(`Unexpected token while parsing value: ${token}, ${this.peek()}, ${JSON.stringify(this.lastCreatedNode)}`);
 
     for(let i = 0; i < blacklistedOperators.length; i++) this.blacklistedOperators.pop();
