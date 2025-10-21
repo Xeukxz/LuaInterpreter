@@ -125,7 +125,7 @@ export interface AnonymousFunctionNode extends BaseFunctionNode {
 
 export interface NamedFunctionNode extends BaseFunctionNode {
   anonymous?: false;
-  name: IdentifierNode;
+  name: IdentifierResolvable;
 }
 
 export interface ExpressionCallNode extends BaseASTNode {
@@ -307,8 +307,12 @@ export class Parser {
   /**
    * Helper to test if a token is a valid identifier
    */
-  isIdentifier(token: string) {
+  isValidIdentifier(token: string) {
     return /[A-Za-z_$][A-Za-z0-9_$]*/.test(token) && !this.isKeyToken(token);
+  }
+
+  isIdentifierResolvable(node: ASTNode): node is IdentifierResolvable {
+    return this.isNodeType(node, ASTNodeType.Identifier, ASTNodeType.IndexProperty);
   }
 
   /**
@@ -326,7 +330,7 @@ export class Parser {
    */
   expectIdentifier(errorMessage?: string): string {
     const t = this.next();
-    if (!this.isIdentifier(t)) throw new Error(errorMessage || `Expected identifier but got '${t}'`);
+    if (!this.isValidIdentifier(t)) throw new Error(errorMessage || `Expected identifier but got '${t}'`);
     return t;
   }
 
@@ -756,17 +760,17 @@ export class Parser {
       body: [],
       local: false,
     };
-    if(this.isIdentifier(this.currentToken)) {
-      this.createNode({
-        ...basefunctionNode,
-        name: this.createIdentifierNode(this.currentToken),
-        anonymous: false,
-      });
-    } else {
-      this.back();
+    if(this.currentToken === '(') {
       this.createNode({
         ...basefunctionNode,
         anonymous: true,
+      });
+    } else {
+      const indentifierToken = this.parseValue(this.currentToken, ['(']);
+      if(!this.isIdentifierResolvable(indentifierToken)) throw new Error(`Expected function name identifier, got ${JSON.stringify(indentifierToken)}`);
+      this.createNode({
+        ...basefunctionNode,
+        name: indentifierToken,
       });
     }
     const functionNode = this.lastCreatedNode as FunctionNode;
@@ -918,7 +922,7 @@ export class Parser {
         const value = this.parseValue(this.next());
         propertyNode = this.createDictPropertyNode(key, value)
 
-      } else if (this.isIdentifier(token)) {
+      } else if (this.isValidIdentifier(token)) {
         if (this.peek() === '=') {
           this.next(); // consume '='
           const value = this.parseValue(this.next());
@@ -975,7 +979,7 @@ export class Parser {
     } else if (['#', '-', 'not'].includes(token)) {
       this.back();
       returnValue = this.handleOperator() as ValueResolvable;
-    } else if (this.isIdentifier(token)) {
+    } else if (this.isValidIdentifier(token)) {
       if(!this.isKeyToken(token)) returnValue = this.createIdentifierNode(token);
       else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
     }

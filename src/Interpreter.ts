@@ -317,9 +317,16 @@ export class Interpreter {
    */
   interpretFunctionDeclaration(node: FunctionNode, env: Environment): RuntimeValue {
     const fn = this.createUserFunction(node, env);
-    if ((node as NamedFunctionNode).name) {
+    if ('name' in node) {
+      if(node.name.type === ASTNodeType.IndexProperty) {
+        const tableValue = this.evaluateIdentifierResolvable(node.name.table, env);
+        if (!this.isTable(tableValue)) throw new Error('Attempt to index a non-table value');
+        const key = node.name.property.type === 'Identifier' ? node.name.property.name : this.evaluateValue(node.name.property, env);
+        tableValue.entries.set(key, fn);
+        return fn;
+      }
       const targetEnv = node.local ? env : this.globalEnv;
-      const name = (node as NamedFunctionNode).name.name;
+      const name = node.name.name;
       if (targetEnv.has(name)) targetEnv.assign(name, fn);
       else targetEnv.define(name, fn);
     }

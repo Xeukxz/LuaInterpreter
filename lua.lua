@@ -139,3 +139,9 @@ local myClosure = Closure()
 print(myClosure()) -- 1
 print(myClosure()) -- 2
 print(myClosure()) -- 3
+
+function table.func(x, y)
+  return x + y
+end
+
+print(table.func(5, 10)) -- 15
