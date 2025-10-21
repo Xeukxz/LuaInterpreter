@@ -46,14 +46,9 @@ while i < 5  do
 end
 print(i) -- 5
 
-if true then
-  print("This is if")
-
-elseif true then
-  print("This is elseif")
-else
-  print("This is else")
-end
+if true then print("This is if") elseif true then print("This is elseif") else print("This is else") end
+if false then print("This is if") elseif true then print("This is elseif") else print("This is else") end
+if false then print("This is if") elseif false then print("This is elseif") else print("This is else") end
 
 a = 0
 
@@ -131,3 +126,16 @@ end
 local mv1, mv2, mv3, mv4, mv5, mv6 = 10, 20, func2(), 60
 
 print(mv1, mv2, mv3, mv4, mv5, mv6) -- 10 20 30 40 50 60
+
+function Closure()
+  local count = 0
+  return function()
+    count = count + 1
+    return count
+  end
+end
+
+local myClosure = Closure()
+print(myClosure()) -- 1
+print(myClosure()) -- 2
+print(myClosure()) -- 3

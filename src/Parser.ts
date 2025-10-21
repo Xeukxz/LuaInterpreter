@@ -247,10 +247,10 @@ export class Parser {
   ast: ASTNode[] = [];
   currentTokenIndex = -1;
   currentToken!: string;
-  currentScope?: {
+  scopeList: {
     node: ASTNode;
     body: ASTNode[];
-  };
+  }[] = [];
   dontResolveCurrentStatement = false;
   debug = false;
   lastCreatedNode: ASTNode | null = null;
@@ -587,7 +587,6 @@ export class Parser {
   parseNextStatement() {
     const token = this.next();
 
-    this.log(`Parsing statement: ${token}`);
     switch (token) {
       case 'local':
         this.parseVariableDeclaration();
@@ -699,17 +698,16 @@ export class Parser {
         return;
 
       case 'return':
-        const returnNode: ReturnNode = {
+        const returnNode: ReturnNode = this.createNode({
           type: ASTNodeType.Return,
           value: this.peek() == 'end' ? this.createNullLiteralNode() : this.parseValue(this.next()),
-        };
+        });
         this.pushNode(returnNode);
         return;
 
       case 'elseif':
       case 'else':
       case 'end':
-        this.log('Ending current scope');
         return;
 
       default:
@@ -751,7 +749,6 @@ export class Parser {
    * Parses a function declaration, and pushes the resulting FunctionNode to the AST.
    */
   parseFunctionDeclaration(callback?: (node: FunctionNode) => void): FunctionNode {
-    this.log(`Parsing function declaration`);
     if(this.currentToken === 'function') this.next();
     const basefunctionNode: BaseFunctionNode = {
       type: ASTNodeType.Function,
@@ -773,11 +770,9 @@ export class Parser {
       });
     }
     const functionNode = this.lastCreatedNode as FunctionNode;
-    this.log(`Function name: ${(functionNode as NamedFunctionNode).name?.name || 'anonymous'}`);
 
     functionNode.params = this.parseParamsDeclaration();
     callback?.(functionNode as FunctionNode);
-    // this.pushNode(functionNode as FunctionNode);
     this.parseBlockBody(functionNode, functionNode.body, ['end']);
     return functionNode as FunctionNode;
   }
@@ -787,19 +782,11 @@ export class Parser {
    * Updates the currentScope context accordingly.
    */
   parseBlockBody(node: ASTNode, scopeBody: ASTNode[], terminators: string[]) {
-    this.currentScope = {
-      node,
-      body: scopeBody,
-    };
-    if(terminators.includes(this.peek() ?? '')) { // handle empty bodies
-      if(!node.parent) this.currentScope = undefined;
-      this.next();
-      return;
-    };
-    do {
-      this.parseNextStatement();
-    } while (!terminators.includes(this.peek() ?? '') && this.currentTokenIndex < this.tokens.length - 1);
-    if(!node.parent) this.currentScope = undefined;
+    if(terminators.includes(this.peek() ?? '')) return void this.next(); // handle empty bodies
+    this.scopeList.push({ node, body: scopeBody });
+    do this.parseNextStatement();
+    while (!terminators.includes(this.peek() ?? '') && this.currentTokenIndex < this.tokens.length - 1);
+    this.scopeList.pop();
   }
 
   /**
@@ -807,7 +794,6 @@ export class Parser {
    */
   parseParamsDeclaration() {
     this.blacklistedOperators.push(',');
-    this.log(`Parsing function parameters`);
     const paramValues: FunctionParameterNode[] = [];
     if(this.currentToken !== '(') this.expect('(');
     while (this.peek() !== ')') {
@@ -872,11 +858,11 @@ export class Parser {
     if(this.isNodeType(this.lastCreatedNode, ASTNodeType.Identifier)) {
       const identifier = this.lastCreatedNode as IdentifierNode;
       const params = this.parseCalledFunctionOrMethodParams();
-      const callNode: ExpressionCallNode = {
+      const callNode: ExpressionCallNode = this.createNode({
         type: ASTNodeType.ExpressionCall,
         id: identifier,
         params,
-      };
+      });
       return callNode;
     }
 
@@ -890,21 +876,21 @@ export class Parser {
    * Helper to create a TableDictItem node
    */
   createDictPropertyNode(key: TableDictItemNode["key"], value: ValueResolvable): TableDictItemNode {
-    return {
+    return this.createNode({
       type: ASTNodeType.TableDictItem,
       key,
       value,
-    };
+    });
   }
 
   /**
    * Helper to create a TableListItem node
    */
   createArrayItemNode(value: ValueResolvable): TableListItemNode {
-    return {
+    return this.createNode({
       type: ASTNodeType.TableListItem,
       value,
-    };
+    });
   }
 
   /**
@@ -999,7 +985,7 @@ export class Parser {
     if(!returnValue) throw new Error(`Unexpected token while parsing value: ${token}, ${this.peek()}, ${JSON.stringify(this.lastCreatedNode)}`);
 
     for(let i = 0; i < blacklistedOperators.length; i++) this.blacklistedOperators.pop();
-    return this.lastCreatedNode as ValueResolvable;
+    return returnValue as ValueResolvable;
   }
 
   /**
@@ -1007,8 +993,9 @@ export class Parser {
    * If the node has a body (like functions), it updates the scope tracking accordingly.
    */
   pushNode(node: ASTNode) {
-    node.parent = this.currentScope?.node;
-    this.currentScope?.body.push(node) ?? this.ast.push(node);
+    const currentScope = this.scopeList[this.scopeList.length - 1];
+    node.parent = currentScope?.node;
+    (currentScope?.body ?? this.ast).push(node)
   }
 
   /**
@@ -1034,13 +1021,9 @@ export class Parser {
    */
   next(): string {
     if (this.currentTokenIndex >= this.tokens.length - 1) return (this.currentToken = undefined as any);
-    if (this.currentTokenIndex > this.maxTokens) {
-      this.log(inspect(this.ast))
-      throw new Error('Max token debug limit reached');
-    }
+    if (this.currentTokenIndex > this.maxTokens) throw new Error('Max token debug limit reached');
     this.currentTokenIndex++;
     this.currentToken = this.tokens[this.currentTokenIndex];
-    this.log(this.currentTokenIndex, this.currentToken);
     return this.currentToken;
   }
 
