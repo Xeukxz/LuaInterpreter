@@ -24,8 +24,7 @@ export enum ASTNodeType {
   ExpressionCall = 'ExpressionCall',
   BinaryExpression = 'BinaryExpression',
   LogicalExpression = 'LogicalExpression',
-  NotExpression = 'NotExpression',
-  LengthExpression = 'LengthExpression',
+  UnaryExpression = 'UnaryExpression',
   NumericFor = 'NumericFor',
   GenericFor = 'GenericFor',
   While = 'While',
@@ -42,10 +41,9 @@ export type ValueResolvableTypesTuple = [
   ASTNodeType.Function,
   ASTNodeType.Identifier,
   ASTNodeType.Table,
-  ASTNodeType.LengthExpression,
   ASTNodeType.BinaryExpression,
   ASTNodeType.LogicalExpression,
-  ASTNodeType.NotExpression,
+  ASTNodeType.UnaryExpression,
   ASTNodeType.IndexProperty,
   ASTNodeType.ExpressionCall,
 ];
@@ -60,19 +58,20 @@ export type ASTNode =
   | TableNode
   | TableItemNode
   | IndexPropertyNode
-  | LengthNode
   | FunctionNode
   | BreakNode
   | ReturnNode
   | ExpressionCallNode
   | BinaryExpressionNode
   | LogicalExpressionNode
-  | NotExpressionNode
+  | UnaryExpressionNode
   | NumericForNode
   | GenericForNode
   | WhileNode
   | RepeatNode
   | IfNode;
+
+export type UnaryOperator = '-' | '#' | 'not';
 
 export type ValueResolvable = Extract<ASTNode, { type: ValueResolvableTypesTuple[number] }>;
 
@@ -156,11 +155,7 @@ export interface IndexPropertyNode extends BaseASTNode {
   type: ASTNodeType.IndexProperty;
   table: IdentifierResolvable;
   property: ValueResolvable;
-}
-
-export interface LengthNode extends BaseASTNode {
-  type: ASTNodeType.LengthExpression;
-  operand: ValueResolvable;
+  referenceSelf?: boolean;
 }
 
 export interface BreakNode extends BaseASTNode {
@@ -181,7 +176,7 @@ export interface AssignmentExpressionNode extends BaseASTNode {
 
 export interface BinaryExpressionNode extends BaseASTNode {
   type: ASTNodeType.BinaryExpression;
-  operator: '+' | '-' | '*' | '/' | '%' | '^' | '<' | '<=' | '>' | '>=' | '==' | '~=';
+  operator: '+' | '-' | '*' | '/' | '%' | '^' | '<' | '<=' | '>' | '>=' | '==' | '~=' | '//';
   left: ValueResolvable;
   right: ValueResolvable;
 }
@@ -193,8 +188,10 @@ export interface LogicalExpressionNode extends BaseASTNode {
   right: ValueResolvable;
 }
 
-export interface NotExpressionNode extends BaseASTNode {
-  type: ASTNodeType.NotExpression;
+
+export interface UnaryExpressionNode extends BaseASTNode {
+  type: ASTNodeType.UnaryExpression;
+  operator: UnaryOperator;
   operand: ValueResolvable;
 }
 
@@ -345,10 +342,9 @@ export class Parser {
       ASTNodeType.Function,
       ASTNodeType.Identifier,
       ASTNodeType.Table,
-      ASTNodeType.LengthExpression,
       ASTNodeType.BinaryExpression,
       ASTNodeType.LogicalExpression,
-      ASTNodeType.NotExpression,
+      ASTNodeType.UnaryExpression,
       ASTNodeType.IndexProperty,
       ASTNodeType.ExpressionCall,
     ] as ValueResolvableTypesTuple
@@ -421,7 +417,7 @@ export class Parser {
    */
   isNextTokenOperator(): boolean {
     const peekFirstChar = (this.peek() ?? '')[0];
-    return [...tokens.operators, 'and', 'or', 'not', '.', ',', '[', '(', '#'].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
+  return [...tokens.operators, 'and', 'or', 'not', '.', ',', ':', '[', '(', '#'].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
   }
 
   /**
@@ -438,11 +434,12 @@ export class Parser {
         case '%':
         case '^':
         case '<':
-        case '<=':
         case '>':
+        case '<=':
         case '>=':
         case '==':
         case '~=':
+        case '//':
           const left = this.lastCreatedNode;
           if (!left || !this.isValueResolvable(left)) throw new Error(`Left operand is not a value for operator '${operator}' ${JSON.stringify(left)}`);
           const right = this.parseValue(this.next());
@@ -468,15 +465,6 @@ export class Parser {
             operator,
             left: logicalLeft,
             right: logicalRight,
-          });
-          break;
-        
-        case 'not':
-          const notValue = this.parseValue(this.next());
-          if (!notValue || !this.isValueResolvable(notValue)) throw new Error(`Operand is not a value for operator 'not' ${JSON.stringify(notValue)}`);
-          this.createNode({
-            type: ASTNodeType.NotExpression,
-            operand: notValue,
           });
           break;
 
@@ -519,14 +507,17 @@ export class Parser {
 
           break;
 
-        case '.': {
+        case '.':
+        case ':':
+          const tableNode = this.lastCreatedNode as IdentifierResolvable;
+          if (!tableNode || !this.isIdentifierResolvable(tableNode)) throw new Error('Property access requires a table or identifier on the left-hand side');
           this.createNode({
             type: ASTNodeType.IndexProperty,
             table: this.lastCreatedNode as IdentifierResolvable,
+            referenceSelf: operator === ':',
             property: this.createIdentifierNode(this.expectIdentifier(`Expected identifier after ., got '${this.peek()}'`)),
           });
           break;
-        }
 
         case '..':
           const concatLeft = this.lastCreatedNode;
@@ -541,15 +532,6 @@ export class Parser {
           });
           break;
         
-        case '#':
-          const lengthOperand = this.parseValue(this.next());
-          if(!lengthOperand || !this.isValueResolvable(lengthOperand)) throw new Error(`Operand is not a value for operator '#' ${JSON.stringify(lengthOperand)}`);
-          this.createNode({
-            type: ASTNodeType.LengthExpression,
-            operand: lengthOperand,
-          });
-          break;
-
         case '[':
           const indexNode: IndexPropertyNode = this.createNode({
             type: ASTNodeType.IndexProperty,
@@ -562,6 +544,7 @@ export class Parser {
         case '(':
           const funcToken = this.lastCreatedNode as IdentifierResolvable;
           const params = this.parseCalledFunctionOrMethodParams();
+          if (this.isNodeType(funcToken, ASTNodeType.IndexProperty) && funcToken.referenceSelf) params.unshift(funcToken.table);
           this.createNode({
             type: ASTNodeType.ExpressionCall,
             id: funcToken,
@@ -745,7 +728,7 @@ export class Parser {
     
     
     const variableNode = this.createVariableDeclarationNode(identifier, initializer);
-    this.log(`Created variable node: ${JSON.stringify(variableNode)}`, variableNode);
+    this.log(`Created variable node: ${inspect(variableNode)}`, variableNode);
     this.pushNode(variableNode);
   }
 
@@ -776,8 +759,20 @@ export class Parser {
     const functionNode = this.lastCreatedNode as FunctionNode;
 
     functionNode.params = this.parseParamsDeclaration();
+    if ('name' in functionNode) {
+      const nameNode = functionNode.name as ASTNode;
+      if (this.isNodeType(nameNode, ASTNodeType.IndexProperty) && nameNode.referenceSelf) {
+        const selfParam: FunctionParameterNode = {
+          type: ASTNodeType.Parameter,
+          name: { type: ASTNodeType.Identifier, name: 'self' },
+          defaultValue: { type: ASTNodeType.Literal, value: null, raw: 'null' },
+        };
+        functionNode.params.unshift(selfParam);
+      }
+    }
     callback?.(functionNode as FunctionNode);
     this.parseBlockBody(functionNode, functionNode.body, ['end']);
+    // this.next(); // consume 'end'
     return functionNode as FunctionNode;
   }
 
@@ -935,6 +930,7 @@ export class Parser {
       }
       propertyNodes.push(propertyNode);
       // consume separator. (not present after last item)
+      if(this.peek() === 'end') this.next();
       if (this.peek() === ',' || this.peek() === ';') this.next();
     }
     this.expect('}');
@@ -950,6 +946,29 @@ export class Parser {
    */
   isKeyToken(token: string): boolean {
     return tokens.all.includes(token);
+  }
+
+  /**
+   * Helper to check if a token is a unary operator
+   */
+  isUnaryOperator(token: string): token is UnaryOperator {
+    return ['-', '#', 'not'].includes(token);
+  }
+
+  /**
+   * Handles parsing of unary operator expressions
+   */
+  handleUnaryOperator(token: string): ValueResolvable {
+    if(!this.isUnaryOperator(token)) throw new Error(`Token is not a unary operator: ${token}`);
+    const operandToken = this.next();
+    if (!operandToken) throw new Error(`Unexpected end of input after unary operator ${token}`);
+    const operand = this.parseValue(operandToken);
+    if(!operand) throw new Error(`Unexpected end of input after unary operator ${token}`);
+    return this.createNode({
+      type: ASTNodeType.UnaryExpression,
+      operator: token,
+      operand,
+    });
   }
 
   /**
@@ -976,9 +995,8 @@ export class Parser {
       const bracketStatement = this.parseBracketStatement();
       if (bracketStatement) returnValue = bracketStatement;
       else throw new Error('Unexpected token while parsing value: ' + token);
-    } else if (['#', '-', 'not'].includes(token)) {
-      this.back();
-      returnValue = this.handleOperator() as ValueResolvable;
+    } else if (this.isUnaryOperator(token)) {
+      returnValue = this.handleUnaryOperator(token);
     } else if (this.isValidIdentifier(token)) {
       if(!this.isKeyToken(token)) returnValue = this.createIdentifierNode(token);
       else throw new Error(`Unexpected keyword token while parsing value: ${token}`);
@@ -986,7 +1004,7 @@ export class Parser {
     if(!this.blacklistedOperators.includes(this.peek() ?? '')) {
       if(this.isNextTokenOperator()) returnValue = this.handleOperator() as ValueResolvable;
     }
-    if(!returnValue) throw new Error(`Unexpected token while parsing value: ${token}, ${this.peek()}, ${JSON.stringify(this.lastCreatedNode)}`);
+    if(!returnValue) throw new Error(`Unexpected token while parsing value: ${token}, ${this.peek()}, ${inspect(this.lastCreatedNode)}`);
 
     for(let i = 0; i < blacklistedOperators.length; i++) this.blacklistedOperators.pop();
     return returnValue as ValueResolvable;

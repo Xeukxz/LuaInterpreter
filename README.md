@@ -10,3 +10,9 @@ A Lua interpreter written in TypeScript.
 - Arithmetic and logical expressions
 - Loops (while, for, repeat)
 - If statements
+- Metatables
+
+## Globals:
+- `print()`
+- `pairs()` and `ipairs()`
+- `setmetatable()` and `getmetatable()`

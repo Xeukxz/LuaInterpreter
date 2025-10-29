@@ -4,7 +4,15 @@ import { Parser } from './src/Parser';
 import fs from 'fs';
 import { Interpreter } from './src/Interpreter';
 
-const lexer = new Lexer(fs.readFileSync("lua.lua", "utf-8"));
+const testFiles = [
+  'tests/variablesAndAssignments.lua', // 0
+  'tests/tables.lua', // 1
+  'tests/loops.lua', // 2
+  'tests/metatables.lua', // 3
+  'tests/misc.lua', // 4
+]
+
+const lexer = new Lexer(fs.readFileSync(testFiles[3], "utf-8"));
 
 // console.log(lexer.tokens.join(" "))
 

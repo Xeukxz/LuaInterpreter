@@ -9,7 +9,6 @@ import {
   IndexPropertyNode,
   LogicalExpressionNode,
   MultipleValueNode,
-  NamedFunctionNode,
   TableDictItemNode,
   TableNode,
   ValueResolvable,
@@ -17,6 +16,9 @@ import {
 } from './Parser';
 
 type LuaPrimitive = string | number | boolean | null;
+type tableBinaryMetamethod = '__add' | '__sub' | '__mul' | '__div' | '__mod' | '__pow' | '__eq' | '__lt' | '__le' | '__idiv';
+type tableUnaryMetamethod = '__unm' | '__len';
+type tableMetamethod = '__index' | '__newindex' | '__concat' | '__len' | tableUnaryMetamethod | tableBinaryMetamethod;
 
 enum NonPrimitiveKind {
   Table = 'table',
@@ -28,6 +30,7 @@ enum NonPrimitiveKind {
 interface LuaTableValue {
   kind: NonPrimitiveKind.Table;
   entries: Map<any, RuntimeValue>;
+  metatable?: LuaTableValue | null;
 }
 
 interface UserFunctionValue {
@@ -135,6 +138,13 @@ export class Interpreter {
   }
 
   /**
+   * Helper to make my inline autism more digestible.
+   */
+  throwErr(msg: string): never {
+    throw new Error(msg);
+  }
+
+  /**
    * Interprets a single AST node within the given environment.
    */
   interpretNode(node: ASTNode, env: Environment): RuntimeValue | void {
@@ -184,17 +194,13 @@ export class Interpreter {
         const left = this.evaluateValue(node.left, env);
         const right = this.evaluateValue(node.right, env);
         switch (node.operator) {
-          case 'and':
-            return left && right;
-          case 'or':
-            return left || right;
-          default:
-            throw new Error(`Unknown logical operator: ${'operator' in node ? (node as any).operator : 'unknown'}`);
+          case 'and': return left && right;
+          case 'or': return left || right;
+          default: throw new Error(`Unknown logical operator: ${'operator' in node ? (node as any).operator : 'unknown'}`);
           }
         }
       case ASTNodeType.MultipleValue:
-      case ASTNodeType.NotExpression:
-      case ASTNodeType.LengthExpression:
+      case ASTNodeType.UnaryExpression:
       case ASTNodeType.ConcatExpression:
         return this.evaluateValue(node, env); // Handled in evaluateValue
       case ASTNodeType.NumericFor: {
@@ -368,7 +374,7 @@ export class Interpreter {
     const tableValue = this.evaluateIdentifierResolvable(node.table, env);
     if (!this.isTable(tableValue)) throw new Error('Attempt to index a non-table value');
     const key = node.property.type === 'Identifier' ? node.property.name : this.evaluateValue(node.property, env);
-    const value = this.getFromTable(tableValue, key);
+    const value = this.getIndexedValue(tableValue, key);
     return value ?? null;
   }
 
@@ -385,9 +391,7 @@ export class Interpreter {
       case ASTNodeType.ConcatExpression: {
         const left = this.evaluateValue(node.left, env) ?? 'nil';
         const right = this.evaluateValue(node.right, env) ?? 'nil';
-        if(typeof left === 'object' || typeof right === 'object') 
-          throw new Error('Attempt to concatenate non-primitive value');
-        return String(left) + String(right);
+        return this.invokeMetamethod(left, right, '__concat') ?? (this.isPrimitive(left) && this.isPrimitive(right) ? String(left) + String(right) : this.throwErr('Attempt to concatenate non-primitive value'));
       }
       case ASTNodeType.Identifier:
         return this.resolveIdentifier(node, env);
@@ -403,16 +407,20 @@ export class Interpreter {
         return this.resolveIndexProperty(node, env);
       case ASTNodeType.LogicalExpression:
         return this.evaluateLogicalExpression(node, env);
-      case ASTNodeType.NotExpression:
-        return !this.evaluateValue(node.operand, env);
-      case ASTNodeType.LengthExpression: {
+      case ASTNodeType.UnaryExpression: {
         const value = this.evaluateValue(node.operand, env);
-        if(this.isTable(value)) {
-          let index = 0;
-          while (value.entries.has(index + 1)) index++;
-          return index;
-        } else if(typeof value === 'string') return value.length;
-        else throw new Error(`Attempt to get length of a non-table/non-string value`);
+        switch (node.operator) {
+          case '-': return this.invokeUnaryMetamethod(value, '__unm') ?? (typeof value === 'number' ? -value : this.throwErr('Unary operator \'-\' expects numeric operand'));
+          case 'not': return !value;
+          case '#':
+            if (this.isTable(value)) return this.invokeUnaryMetamethod(value, '__len') ?? (() => {
+              let index = 0;
+              while (value.entries.has(index + 1)) index++;
+              return index;
+            })();
+            else if (typeof value === 'string') return value.length;
+            else throw new Error(`Attempt to get length of a non-table/non-string value`);
+        }
       }
       case ASTNodeType.MultipleValue:
         return {
@@ -460,9 +468,7 @@ export class Interpreter {
         this.interpretNode(statement, activationEnv);
       }
     } catch (signal) {
-      if (signal instanceof ReturnSignal) {
-        return signal.value ?? null;
-      }
+      if (signal instanceof ReturnSignal) return signal.value ?? null;
       throw signal;
     }
 
@@ -510,39 +516,121 @@ export class Interpreter {
   }
 
   /**
+   * Invokes a unary metamethod on a value if it is a table.
+   */
+  invokeUnaryMetamethod(
+    value: RuntimeValue,
+    methodName: tableUnaryMetamethod,
+  ): RuntimeValue | undefined {
+    return this.isTable(value) ? this.callTableMetamethod(value, methodName, [value]) : undefined;
+  }
+
+  /**
+   * Retrieves a value from a table, honoring the '__index' chain.
+   * Guards against infinite recursion by tracking visited tables.
+   */
+  getIndexedValue(
+    table: LuaTableValue,
+    key: RuntimeValue,
+    visited: Set<LuaTableValue> = new Set(),
+  ): RuntimeValue | null {
+    const direct = this.getFromTable(table, key);
+    if (direct !== undefined) return direct;
+    if (visited.has(table)) return null;
+    visited.add(table);
+
+    const metatable = table.metatable ?? null;
+    if (!metatable) return null;
+    const index = metatable.entries.get('__index');
+    if (!index) return null;
+    
+    if (this.isFunction(index)) return this.callFunction(index, [table, key]) ?? null;
+    if (this.isTable(index)) return this.getIndexedValue(index, key, visited);
+
+    return null;
+  }
+
+  /**
+   * Checks if the given value is a table and calls the specified metamethod if it exists.
+   */
+  invokeMetamethod(
+    left: RuntimeValue,
+    right: RuntimeValue,
+    methodName: tableMetamethod,
+    args: [RuntimeValue, RuntimeValue] = [left, right],
+  ): RuntimeValue | undefined {
+    if (methodName === '__eq') return this.invokeEqualityMetamethod(left, right);
+    if (this.isTable(left)) {
+      const result = this.callTableMetamethod(left, methodName, args);
+      if (result !== undefined) return result;
+    }
+    if (this.isTable(right)) {
+      const result = this.callTableMetamethod(right, methodName, args);
+      if (result !== undefined) return result;
+    }
+    return undefined;
+  }
+
+  /**
+   * Invokes the '__eq' metamethod for equality checks if both operands are tables with the same metatable.
+   */
+  invokeEqualityMetamethod(left: RuntimeValue, right: RuntimeValue): RuntimeValue | undefined {
+    if (!this.isTable(left) || !this.isTable(right)) return undefined;
+    const leftMetatable = left.metatable ?? null;
+    const rightMetatable = right.metatable ?? null;
+    if (!leftMetatable || leftMetatable !== rightMetatable) return undefined;
+    const metamethod = leftMetatable.entries.get('__eq');
+    if (metamethod && this.isFunction(metamethod)) return this.callFunction(metamethod, [left, right]);
+    return undefined;
+  }
+
+  /**
+   * Calls a table metamethod if it exists for the given table and method name.
+   */
+  callTableMetamethod(
+    table: LuaTableValue,
+    methodName: tableMetamethod,
+    args: RuntimeValue[],
+  ): RuntimeValue | undefined {
+    const metamethod = table.metatable?.entries.get(methodName);
+    if (metamethod && this.isFunction(metamethod)) return this.callFunction(metamethod, args);
+  }
+
+  /**
    * Evaluates a binary expression node, performing the specified operation on its left and right operands.
    */
   evaluateBinaryExpression(node: BinaryExpressionNode, env: Environment): RuntimeValue {
-    const left = this.evaluateValue(node.left, env);
-    const right = this.evaluateValue(node.right, env);
-    if (typeof left !== 'number' || typeof right !== 'number') {
-      throw new Error(`Binary operator '${node.operator}' expects numeric operands`);
-    }
+    const left = this.evaluateValue(node.left, env) as number;
+    const right = this.evaluateValue(node.right, env) as number;
+    const assureNumbers = () => typeof left === 'number' && typeof right === 'number' || this.throwErr(`Binary operator '${node.operator}' expects numeric operands`);
+    const invokeMeta = (name: tableBinaryMetamethod, first: RuntimeValue = left, second: RuntimeValue = right) => this.invokeMetamethod(left, right, name, [first, second]) ?? void assureNumbers();
     switch (node.operator) {
       case '+':
-        return left + right;
+        return invokeMeta('__add') ?? left + right;
       case '-':
-        return left - right;
+        return invokeMeta('__sub') ?? left - right;
       case '*':
-        return left * right;
+        return invokeMeta('__mul') ?? left * right;
       case '/':
-        return left / right;
+        return invokeMeta('__div') ?? left / right;
+      case '//':
+        return invokeMeta('__idiv') ?? Math.floor(left / right);
       case '%':
-        return left % right;
+        return invokeMeta('__mod') ?? left % right;
       case '^':
-        return Math.pow(left, right);
+        return invokeMeta('__pow') ?? Math.pow(left, right);
       case '<':
-        return left < right;
+        return invokeMeta('__lt') ?? left < right;
       case '<=':
-        return left <= right;
+        return invokeMeta('__le') ?? left <= right;
       case '>':
-        return left > right;
+        return invokeMeta('__lt', right, left) ?? left > right;
       case '>=':
-        return left >= right;
+        return invokeMeta('__le', right, left) ?? left >= right;
       case '==':
-        return left === right;
+        return this.invokeMetamethod(left, right, '__eq') ?? (left === right);
       case '~=':
-        return left !== right;
+        return !(this.invokeMetamethod(left, right, '__eq') ?? (left === right));
       default:
         throw new Error(`Unsupported binary operator '${node.operator}'`);
     }
@@ -606,9 +694,7 @@ export class Interpreter {
       kind: NonPrimitiveKind.BuiltinFunction,
       name: 'pairs',
       impl: (_interpreter, args) => {
-        if (args.length === 0 || !_interpreter.isTable(args[0])) {
-          throw new Error('pairs expects a table as its first argument');
-        }
+        if (args.length === 0 || !_interpreter.isTable(args[0])) throw new Error('pairs expects a table as its first argument');
         const table = args[0] as LuaTableValue;
         let index = 0;
         return {
@@ -630,9 +716,7 @@ export class Interpreter {
       kind: NonPrimitiveKind.BuiltinFunction,
       name: 'ipairs',
       impl: (_interpreter, args) => {
-        if (args.length === 0 || !_interpreter.isTable(args[0])) {
-          throw new Error('ipairs expects a table as its first argument');
-        }
+        if (args.length === 0 || !_interpreter.isTable(args[0])) throw new Error('ipairs expects a table as its first argument');
         const table = args[0] as LuaTableValue;
         let index = 0;
         return {
@@ -649,6 +733,38 @@ export class Interpreter {
           },
         } as BuiltinFunctionValue;
       },
+    });
+    this.globalEnv.define('setmetatable', {
+      kind: NonPrimitiveKind.BuiltinFunction,
+      name: 'setmetatable',
+      impl: (_interpreter, args) => {
+        if (args.length < 2) throw new Error('setmetatable expects two arguments: table and metatable');
+        const table = args[0];
+        const metatable = args[1] ?? null;
+        if (!_interpreter.isTable(table)) throw new Error('setmetatable expects a table as its first argument');
+        if (metatable !== null && !_interpreter.isTable(metatable))
+           throw new Error('setmetatable expects a table or nil as its second argument');
+        const currentMetatable = table.metatable ?? null;
+        if (currentMetatable && currentMetatable.entries.has('__metatable'))
+          throw new Error('Cannot change a protected metatable');
+        table.metatable = metatable;
+        return table;
+      },
+    });
+
+    this.globalEnv.define('getmetatable', {
+      kind: NonPrimitiveKind.BuiltinFunction,
+      name: 'getmetatable',
+      impl: (_interpreter, args) => {
+        if (args.length === 0) throw new Error('getmetatable expects one argument');
+        const value = args[0];
+        if (!_interpreter.isTable(value)) return null;
+        const metatable = value.metatable ?? null;
+        if (!metatable) return null;
+        return metatable.entries.has('__metatable')
+          ? metatable.entries.get('__metatable') ?? null
+          : metatable;
+      }
     });
   }
 
