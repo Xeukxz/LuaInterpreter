@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "A simple Lua interpreter written in TypeScript.",
   "scripts": {
-    "start": "tsx index.ts"
+    "dev": "nodemon --ext ts,lua --exec \"tsx main.ts\"",
+    "start": "tsx main.ts"
   },
   "devDependencies": {
     "@types/node": "^24.5.2"
