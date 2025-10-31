@@ -51,9 +51,11 @@ export class Lexer {
     if(this.charIndex >= this.lua.length) return;
     if(this.checkForAndPushString()) return;
 
-    const char = this.char;
+    // Check for numbers
+    if (/\d/.test(char) || (char === '.' && /\d/.test(this.peek() ?? ''))) return this.parseNumber(char);
     
-    // check for and combine consecutive operators
+
+    // Check for and combine consecutive operators
     if(multiSymbolOperators.includes(char)) {
       let tokenOfOperators = char;
       while(multiSymbolOperators.includes(this.peek() ?? "")) tokenOfOperators += this.nextChar();
@@ -130,6 +132,73 @@ export class Lexer {
     }
     this.charIndex = i-1;
     return stringType + string + endingChars;
+  }
+
+  /**
+   * Handles and consumes a number literal from the current position in the input Lua code.  
+   * Supports integers, decimals, and scientific notation.
+   * @param initialChar The first character of the number literal.
+   * @returns The complete parsed number literal.
+   */
+  private parseNumber(initialChar: string) {
+    let numberLiteral = initialChar;
+    let hasDecimalPoint = initialChar === '.';
+    let isHex = initialChar === '0' && (this.peek() === 'x' || this.peek() === 'X');
+    let hasExponent = false;
+
+    const isDigit = (value: string | undefined) => value !== undefined && /\d/.test(value);
+    const isHexDigit = (value: string | undefined) => isDigit(value) || ['a','b','c','d','e','f','A','B','C','D','E','F'].includes(value ?? '');
+
+    if(isHex) numberLiteral += this.nextChar(); // consume 'x' or 'X'
+
+    while (true) {
+      const nextChar = this.peek();
+      if (!nextChar) break;
+
+      if (nextChar === '.' && !hasDecimalPoint && this.peek(2) !== '.') {
+        hasDecimalPoint = true;
+        numberLiteral += this.nextChar();
+        continue;
+      }
+
+      if ((nextChar === 'e' || nextChar === 'E') && !hasExponent && !isHex) {
+        const afterExponent = this.peek(2);
+        const digitAfterSign = this.peek(3);
+        if (isDigit(afterExponent) || ((afterExponent === '+' || afterExponent === '-') && isDigit(digitAfterSign))) {
+          hasExponent = true;
+          numberLiteral += this.nextChar();
+          if (this.peek() === '+' || this.peek() === '-') numberLiteral += this.nextChar();
+          while (isDigit(this.peek())) numberLiteral += this.nextChar();
+          continue;
+        }
+      }
+
+      if (isHex && isHexDigit(nextChar)) {
+        numberLiteral += this.nextChar();
+        continue;
+      }
+
+      if (isDigit(nextChar)) {
+        numberLiteral += this.nextChar();
+        continue;
+      }
+
+      if (isHex && (nextChar === 'p' || nextChar === 'P') && !hasExponent) {
+        const afterExponent = this.peek(2);
+        const digitAfterSign = this.peek(3);
+        if (isDigit(afterExponent) || ((afterExponent === '+' || afterExponent === '-') && isDigit(digitAfterSign))) {
+          hasExponent = true;
+          numberLiteral += this.nextChar();
+          if (this.peek() === '+' || this.peek() === '-') numberLiteral += this.nextChar();
+          while (isDigit(this.peek())) numberLiteral += this.nextChar();
+          continue;
+        }
+      }
+
+      break;
+    }
+
+    this.pushToken(numberLiteral);
   }
 
   /**

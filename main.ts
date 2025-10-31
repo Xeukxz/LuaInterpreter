@@ -13,7 +13,7 @@ const testFiles = [
   'tests/misc.lua', // 5
 ]
 
-const code = fs.readFileSync(testFiles[5], "utf-8");
+const code = fs.readFileSync(testFiles[0], "utf-8");
 
 const lexer = new Lexer(code);
 

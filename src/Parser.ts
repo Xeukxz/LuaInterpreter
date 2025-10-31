@@ -372,6 +372,55 @@ export class Parser {
   }
 
   /**
+   * Helper to parse Lua number literals including hexadecimal floating point
+   */
+  parseLuaNumber(token: string): number {
+    return token.toLowerCase().startsWith('0x') ? this.parseHexNumber(token) : Number(token);
+  }
+
+  /**
+   * Parse hexadecimal number including floating point format (0x1.5p4)
+   */
+  parseHexNumber(token: string): number {
+    const hex = token.slice(2); // Remove '0x' prefix
+    
+    // Check if it has binary exponent (p or P)
+    const expMatch = hex.match(/^([0-9a-fA-F]*\.?[0-9a-fA-F]*)[pP]([-+]?\d+)$/i);
+    
+    if (expMatch) {
+      // Hex float with binary exponent: 0x1.5p4
+      const mantissaStr = expMatch[1];
+      const exponent = parseInt(expMatch[2], 10);
+      
+      // Parse mantissa as hex
+      let mantissa = 0;
+      if (mantissaStr.includes('.')) {
+        const [intPart, fracPart] = mantissaStr.split('.');
+        mantissa = parseInt(intPart || '0', 16);
+        if (fracPart) mantissa += parseInt(fracPart, 16) / Math.pow(16, fracPart.length);
+      } else mantissa = parseInt(mantissaStr, 16);
+      
+      // Apply binary exponent: mantissa * 2^exponent
+      return mantissa * Math.pow(2, exponent);
+    } else {
+      // Regular hex integer or hex with decimal point but no exponent
+      if (hex.includes('.')) {
+        const [intPart, fracPart] = hex.split('.');
+        let result = parseInt(intPart || '0', 16);
+        if (fracPart) result += parseInt(fracPart, 16) / Math.pow(16, fracPart.length);
+        return result;
+      } else return parseInt(hex, 16);
+    }
+  }
+
+  /**
+   * Helper to check if a token is a valid Lua number
+   */
+  isLuaNumber(token: string): boolean {
+    return token.toLowerCase().startsWith('0x') ? /^0x[0-9a-fA-F]*\.?[0-9a-fA-F]*([pP][-+]?\d+)?$/i.test(token) : !isNaN(Number(token));
+  }
+
+  /**
    * Helper to create a Literal node (string, number, boolean, null)
    */
   createLiteralNode(value: any, originalToken: string): LiteralNode {
@@ -982,8 +1031,8 @@ export class Parser {
     let returnValue: ValueResolvable | null = null;
     if (this.isStringLiteral(token)) {
       returnValue = this.createLiteralNode(this.parseStringLiteral(token), token);
-    } else if (!isNaN(Number(token))) {
-      returnValue = this.createLiteralNode(Number(token), token);
+    } else if (this.isLuaNumber(token)) {
+      returnValue = this.createLiteralNode(this.parseLuaNumber(token), token);
     } else if (token === 'true' || token === 'false') {
       returnValue = this.createLiteralNode(token === 'true', token);
     } else if (token === 'nil') {

@@ -6,6 +6,11 @@ function Closure()
   end
 end
 
+-- Single line Comment
+--[[
+  Multi-line Comment
+--]]
+
 local myClosure = Closure()
 print(1, myClosure()) -- 1
 print(2, myClosure()) -- 2

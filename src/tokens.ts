@@ -1,4 +1,4 @@
-const tokens = {
+const Tokens = {
   keywords: [
     'and',
     'break',
@@ -27,10 +27,10 @@ const tokens = {
   all: [] as string[],
 };
 
-tokens.all = [
-  ...tokens.keywords,
-  ...tokens.operators,
-  ...tokens.delimiters,
+Tokens.all = [
+  ...Tokens.keywords,
+  ...Tokens.operators,
+  ...Tokens.delimiters,
 ];
 
-export { tokens };
+export { Tokens };
