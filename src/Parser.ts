@@ -1,4 +1,5 @@
-import { tokens } from './tokens';
+import { Token } from './Lexer';
+import { Tokens } from './tokens';
 import { inspect } from 'util';
 
 export interface BaseASTNode {
@@ -254,7 +255,7 @@ export class Parser {
   maxTokens = Number.MAX_VALUE;
   blacklistedOperators: string[] = [];
 
-  constructor(public tokens: string[], options?: { debug?: boolean; maxTokens?: number }) {
+  constructor(public tokens: Token[], options?: { debug?: boolean; maxTokens?: number }) {
     if (options?.debug) this.debug = true;
     if (options?.maxTokens) this.maxTokens = options.maxTokens;
 
@@ -417,7 +418,7 @@ export class Parser {
    */
   isNextTokenOperator(): boolean {
     const peekFirstChar = (this.peek() ?? '')[0];
-  return [...tokens.operators, 'and', 'or', 'not', '.', ',', ':', '[', '(', '#'].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
+  return [...Tokens.operators, 'and', 'or', 'not', '.', ',', ':', '[', '(', '#'].includes(/\w/.test(peekFirstChar) ? this.peek() ?? '' : peekFirstChar);
   }
 
   /**
@@ -945,7 +946,7 @@ export class Parser {
    * Helper to check if a token is a reserved keyword or operator/delimiter.
    */
   isKeyToken(token: string): boolean {
-    return tokens.all.includes(token);
+    return Tokens.all.includes(token);
   }
 
   /**
@@ -1045,7 +1046,7 @@ export class Parser {
     if (this.currentTokenIndex >= this.tokens.length - 1) return (this.currentToken = undefined as any);
     if (this.currentTokenIndex > this.maxTokens) throw new Error('Max token debug limit reached');
     this.currentTokenIndex++;
-    this.currentToken = this.tokens[this.currentTokenIndex];
+    this.currentToken = this.tokens[this.currentTokenIndex][0];
     return this.currentToken;
   }
 
@@ -1053,7 +1054,7 @@ export class Parser {
    * Peeks ahead in the token stream by a specified offset without advancing the current position.
    */
   peek(offset = 1): string | undefined {
-    return this.tokens[this.currentTokenIndex + offset];
+    return this.tokens[this.currentTokenIndex + offset]?.[0];
   }
 
   /**
@@ -1063,6 +1064,6 @@ export class Parser {
   back() {
     if (this.currentTokenIndex <= 0) return;
     this.currentTokenIndex--;
-    this.currentToken = this.tokens[this.currentTokenIndex];
+    this.currentToken = this.tokens[this.currentTokenIndex][0];
   }
 }

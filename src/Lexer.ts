@@ -1,25 +1,33 @@
-import { tokens } from './tokens';
+import { Tokens } from './tokens';
 
-const multiSymbolOperators = [...tokens.operators, '.'];
+const multiSymbolOperators = [...Tokens.operators, '.'];
+
+export enum TokenData {
+  token,
+  startIndex,
+  endIndex,
+}
+
+export type Token = [string, number, number];
 
 /**
  * A lexer for Lua code that tokenizes the input string into meaningful components.
  * @param lua The Lua code as a string to be tokenized.
  */
 export class Lexer {
-  nextToken = "";
   states = {
     openstring: false,
     openbracket: false,
     openbracketCount: 0,
   }
-  tokens: string[] = [];
-  charIndex = 0;
+  tokens: Token[] = [];
+  charIndex = -1
 
-  get char() {
+  get currentChar(): string {
     return this.lua[this.charIndex];
   }
-  peek(offset: number) {
+
+  peek(offset: number = 1): string | undefined {
     return this.lua[this.charIndex + offset];
   }
 
@@ -34,10 +42,12 @@ export class Lexer {
    */
   pushNextToken() {
     
-    // Skip initial whitespace
-    while(/\s/.test(this.lua[this.charIndex])) this.charIndex++;
+    let char = this.nextChar();
 
-    if(this.checkForAndSkipComment()) return; // return if a comment was found and skipped to recheck white space after it
+    // Skip initial whitespace
+    if (/\s/.test(char)) return;
+
+    if(this.checkForAndSkipComment()) return;
     if(this.charIndex >= this.lua.length) return;
     if(this.checkForAndPushString()) return;
 
@@ -46,32 +56,24 @@ export class Lexer {
     // check for and combine consecutive operators
     if(multiSymbolOperators.includes(char)) {
       let tokenOfOperators = char;
-      while(multiSymbolOperators.includes(this.peek(1))) {
-        tokenOfOperators += this.peek(1);
-        this.charIndex++;
-      }
+      while(multiSymbolOperators.includes(this.peek() ?? "")) tokenOfOperators += this.nextChar();
       this.pushToken(tokenOfOperators);
-      this.charIndex++;
       return;
     }
 
     // Check for delimiters
-    if(tokens.delimiters.includes(char)) {
+    if(Tokens.delimiters.includes(char)) {
       this.pushToken(char);
-      this.charIndex++;
       return;
     }
 
     // Check for keywords or identifiers
     let identifier = "";
-    while(/[a-zA-Z_\d]/.test(this.peek(0)) && this.charIndex < this.lua.length) {
-      identifier += this.peek(0);
-      this.charIndex++;
+    while(/[a-zA-Z_\d]/.test(char) && this.charIndex < this.lua.length) {
+      identifier += char;
+      char = this.nextChar();
     }
-    if(identifier) {
-      this.pushToken(identifier);
-      return;
-    }
+    if(identifier) return this.charIndex--, void this.pushToken(identifier);
 
     // Warn about funky characters
     console.warn(`\x1b[33mUnrecognized character: ${char} (${char.charCodeAt(0)}) at index ${this.charIndex}\x1b[0m`);
@@ -84,9 +86,9 @@ export class Lexer {
    * @returns true if a string was found and processed, false otherwise.
    */
   checkForAndPushString(): boolean {
-    const char = this.char;
-    if(char == "\"" || char == "'" || (char == "[" && this.peek(1) == "[")) {
-      const stringType = char == "[" ? "[[" : char;
+    const char = this.currentChar;
+    if(char === "\"" || char === "'" || (char === "[" && this.peek() === "[")) {
+      const stringType = char === "[" ? "[[" : char;
       this.charIndex += stringType.length;
       this.pushToken(this.parseString(stringType as '"' | "'" | "[["));
       return true;
@@ -101,14 +103,14 @@ export class Lexer {
    * @returns The complete parsed string including delimiters.
    */
   parseString(stringType: '"' | "'" | "[[") {
-    let endingChars = stringType == "[[" ? "]]" : stringType;
+    let endingChars = stringType === "[[" ? "]]" : stringType;
     let string = new String();
     let i = this.charIndex;
     while (i < this.lua.length) {
       let stringChar = this.lua[i];
       
       // handle escape characters
-      if(stringChar == '\\') string += this.lua[++i], i++, stringChar = this.lua[i];
+      if(stringChar === '\\') string += this.lua[++i], i++, stringChar = this.lua[i];
       
       let matchedEnding = true;
       for(let j = 0; j < endingChars.length; j++) {
@@ -126,7 +128,7 @@ export class Lexer {
       string += this.lua[i];
       i++;
     }
-    this.charIndex = i;
+    this.charIndex = i-1;
     return stringType + string + endingChars;
   }
 
@@ -136,20 +138,20 @@ export class Lexer {
    * @returns true if a comment was found and skipped, false otherwise.
    */
   checkForAndSkipComment(): boolean {
-    if(this.peek(0) == "-" && this.peek(1) == "-" ) {
-      if(this.peek(2) == "[" && this.peek(3) == "[") { // Multiline comment
-        this.charIndex += 4;
+    if(this.peek(0) === "-" && this.peek() === "-") {
+      this.charIndex += 2;
+      if(this.peek(0) === "[" && this.peek() === "[") { // Multiline comment
+        this.charIndex += 2;
         while(this.charIndex < this.lua.length) {
-          if(this.peek(0) == "-" && this.peek(1) == "-" && this.peek(2) == "]" && this.peek(3) == "]") {
-            this.charIndex += 4;
+          if(this.peek(0) === "]" && this.peek(1) === "]") {
+            this.charIndex += 2;
             return true;
           }
           this.charIndex++;
         }
+        return true;
       } else { // Single line comment
-        this.charIndex += 2;
-        while(this.charIndex < this.lua.length && this.lua[this.charIndex] != '\n') this.charIndex++;
-        this.charIndex++; // Skip the newline
+        while(this.charIndex < this.lua.length && this.lua[this.charIndex] !== '\n') this.charIndex++;
         return true;
       }
     }
@@ -162,7 +164,17 @@ export class Lexer {
    * @param token The token string to push.
    */
   pushToken(token: string) {
-    this.tokens.push(token);
-    this.nextToken = this.lua[this.charIndex + 1]  || "";
+    const endIndex = this.charIndex + 1;
+    const startIndex = endIndex - token.length;
+    const tokenData = [token, startIndex, endIndex] as Token;
+    this.tokens.push(tokenData);
+    if(token !== this.lua.slice(startIndex, endIndex)) 
+      throw new Error(`Missmatched Token: "${token}" vs "${this.lua.slice(startIndex, endIndex)}", at index ${startIndex}-${endIndex}`);
+  }
+
+  nextChar() {
+    this.charIndex++;
+    // console.log(this.lua[this.charIndex], this.charIndex);
+    return this.lua[this.charIndex];
   }
 }
